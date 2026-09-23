@@ -1,4 +1,4 @@
-"""Services for the extended openai conversation component."""
+"""Services for the OpenClaw integration."""
 
 import base64
 import logging
@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 from openai._exceptions import OpenAIError
 import voluptuous as vol
 
-from homeassistant.const import CONF_API_KEY
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -22,12 +21,6 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
-    CONF_API_PROVIDER,
-    CONF_API_VERSION,
-    CONF_BASE_URL,
-    CONF_ORGANIZATION,
-    CONF_SKIP_AUTHENTICATION,
-    DEFAULT_CONF_BASE_URL,
     DOMAIN,
     GITHUB_REPO_NAME,
     GITHUB_REPO_OWNER,
@@ -37,7 +30,6 @@ from .const import (
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
 )
-from .helpers import get_authenticated_client, get_token_param_for_model
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
     {
@@ -46,26 +38,10 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
                 "integration": DOMAIN,
             }
         ),
-        vol.Required("model", default="gpt-4.1-mini"): cv.string,
+        vol.Required("model", default="openclaw:main"): cv.string,
         vol.Required("prompt"): cv.string,
         vol.Required("images"): vol.All(cv.ensure_list, [{"url": cv.string}]),
         vol.Optional("max_tokens", default=300): cv.positive_int,
-    }
-)
-
-CHANGE_CONFIG_SCHEMA = vol.Schema(
-    {
-        vol.Required("config_entry"): selector.ConfigEntrySelector(
-            {
-                "integration": DOMAIN,
-            }
-        ),
-        vol.Optional(CONF_API_KEY): cv.string,
-        vol.Optional(CONF_BASE_URL): cv.string,
-        vol.Optional(CONF_API_VERSION): cv.string,
-        vol.Optional(CONF_ORGANIZATION): cv.string,
-        vol.Optional(CONF_SKIP_AUTHENTICATION): cv.boolean,
-        vol.Optional(CONF_API_PROVIDER): cv.string,
     }
 )
 
@@ -81,7 +57,7 @@ _LOGGER = logging.getLogger(__package__)
 
 
 async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
-    """Set up services for the extended openai conversation component."""
+    """Set up services for the OpenClaw integration."""
 
     async def query_image(call: ServiceCall) -> ServiceResponse:
         """Query an image."""
@@ -106,13 +82,10 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
 
             client = entry.runtime_data
 
-            token_param = get_token_param_for_model(model)
-            token_kwargs = {token_param: call.data["max_tokens"]}
-
             response = await client.chat.completions.create(
                 model=model,
                 messages=messages,
-                **token_kwargs,
+                max_tokens=call.data["max_tokens"],
             )
             response_dict: dict = response.model_dump()
             _LOGGER.info("Response %s", response_dict)
@@ -120,54 +93,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
         return response_dict
-
-    async def change_config(call: ServiceCall) -> None:
-        """Change configuration."""
-        entry_id = call.data["config_entry"]
-        entry = hass.config_entries.async_get_entry(entry_id)
-        if not entry or entry.domain != DOMAIN:
-            raise HomeAssistantError(f"Config entry {entry_id} not found")
-
-        updates = {}
-        for key in (
-            CONF_API_KEY,
-            CONF_BASE_URL,
-            CONF_API_VERSION,
-            CONF_ORGANIZATION,
-            CONF_SKIP_AUTHENTICATION,
-            CONF_API_PROVIDER,
-        ):
-            if key in call.data:
-                updates[key] = call.data[key]
-
-        if not updates:
-            return
-
-        new_data = entry.data.copy()
-        new_data.update(updates)
-
-        _LOGGER.debug("Updating config entry %s with %s", entry_id, new_data)
-
-        base_url = new_data.get(CONF_BASE_URL)
-        if base_url == DEFAULT_CONF_BASE_URL:
-            # Do not set base_url if using OpenAI for case of OpenAI's base_url change
-            base_url = None
-            new_data.pop(CONF_BASE_URL)
-
-        if new_data.get(CONF_API_PROVIDER) == "azure" and not base_url:
-            raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
-
-        await get_authenticated_client(
-            hass=hass,
-            api_key=new_data[CONF_API_KEY],
-            base_url=new_data.get(CONF_BASE_URL),
-            api_version=new_data.get(CONF_API_VERSION),
-            organization=new_data.get(CONF_ORGANIZATION),
-            skip_authentication=new_data.get(CONF_SKIP_AUTHENTICATION, False),
-            api_provider=new_data.get(CONF_API_PROVIDER),
-        )
-
-        hass.config_entries.async_update_entry(entry, data=new_data)
 
     async def reload_skills(call: ServiceCall) -> ServiceResponse:
         """Reload skills from the user skill directory."""
@@ -274,13 +199,6 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
         query_image,
         schema=QUERY_IMAGE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "change_config",
-        change_config,
-        schema=CHANGE_CONFIG_SCHEMA,
     )
 
     hass.services.async_register(

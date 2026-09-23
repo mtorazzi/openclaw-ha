@@ -1,4 +1,4 @@
-"""Tools for Extended OpenAI Conversation."""
+"""Tools for OpenClaw."""
 
 from __future__ import annotations
 

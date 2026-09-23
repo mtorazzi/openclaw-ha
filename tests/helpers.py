@@ -54,7 +54,7 @@ def prepare_function_tool_from_yaml(filename: str, index: int = 0) -> dict[str, 
     Returns:
         Function definition with validated function config containing Template objects
     """
-    from custom_components.extended_openai_conversation.functions import get_function
+    from custom_components.openclaw.functions import get_function
 
     function_tool = get_function_tool_from_yaml(filename, index)
 

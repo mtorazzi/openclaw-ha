@@ -2,14 +2,23 @@
   "config": {
     "step": {
       "user": {
+        "title": "Connect to OpenClaw gateway",
+        "description": "Enter the connection details of your OpenClaw gateway. The OpenAI-compatible API must be enabled (gateway.http.endpoints.chatCompletions.enabled: true).",
         "data": {
-          "name": "[%key:common::config_flow::data::name%]",
-          "api_key": "[%key:common::config_flow::data::api_key%]",
-          "base_url": "[%key:common::config_flow::data::base_url%]",
-          "api_version": "[%key:common::config_flow::data::api_version%]",
-          "organization": "[%key:common::config_flow::data::organization%]",
-          "skip_authentication": "[%key:common::config_flow::data::skip_authentication%]",
-          "api_provider": "[%key:common::config_flow::data::api_provider%]"
+          "gateway_host": "Host",
+          "gateway_port": "Port",
+          "gateway_token": "Token",
+          "use_ssl": "Use SSL",
+          "verify_ssl": "Verify SSL certificate",
+          "agent_id": "Agent ID"
+        },
+        "data_description": {
+          "gateway_host": "Hostname or IP address of the OpenClaw gateway (e.g. 192.168.20.141).",
+          "gateway_port": "TCP port of the gateway (default 18789).",
+          "gateway_token": "Gateway bearer token (gateway.auth.token in openclaw.json). Stored as a secret.",
+          "use_ssl": "Connect over HTTPS instead of HTTP.",
+          "verify_ssl": "Verify the TLS certificate. Disable for self-signed certificates.",
+          "agent_id": "OpenClaw agent to route requests to. Used as the openclaw:<agent_id> model alias."
         }
       }
     },
@@ -17,6 +26,9 @@
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
     }
   },
   "config_subentries": {
@@ -30,30 +42,27 @@
         "init": {
           "data": {
             "max_tokens": "Maximum tokens to return in response",
-            "model": "Completion Model",
-            "prompt": "Prompt Template",
+            "chat_model": "Completion model",
+            "prompt": "Prompt template",
             "max_function_calls_per_conversation": "Maximum function calls per conversation",
             "skills": "Skills",
             "functions": "Functions",
-            "attach_username": "Attach Username to Message",
-            "context_threshold": "Context Threshold",
-            "context_truncate_strategy": "Context truncation strategy when exceeded threshold",
-            "advanced_options": "Advanced Options"
+            "context_threshold": "Context threshold",
+            "context_truncate_strategy": "Context truncation strategy when threshold is exceeded",
+            "advanced_options": "Advanced options"
           },
           "data_description": {}
         },
         "advanced": {
-          "title": "Advanced Options",
+          "title": "Advanced options",
           "data": {
             "temperature": "Temperature",
             "top_p": "Top P",
-            "reasoning_effort": "Reasoning effort",
             "extra_body": "Extra body (JSON for OpenAI-compatible backends)",
-            "service_tier": "Service tier",
             "shorten_tool_call_id": "Shorten tool call IDs"
           },
           "data_description": {
-            "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
+            "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenClaw and most other providers."
           }
         }
       }
@@ -78,19 +87,108 @@
           "data": {
             "temperature": "Temperature",
             "top_p": "Top P",
-            "reasoning_effort": "Reasoning effort",
             "extra_body": "Extra body (JSON for OpenAI-compatible backends)",
-            "service_tier": "Service tier",
             "shorten_tool_call_id": "Shorten tool call IDs"
           },
           "data_description": {
-            "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
+            "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenClaw and most other providers."
           }
         }
       }
     }
   },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status"
+      },
+      "model": {
+        "name": "Model"
+      },
+      "last_activity": {
+        "name": "Last activity"
+      },
+      "last_tool_name": {
+        "name": "Last tool"
+      },
+      "last_tool_status": {
+        "name": "Last tool status"
+      },
+      "last_tool_duration_ms": {
+        "name": "Last tool duration"
+      },
+      "last_tool_invoked_at": {
+        "name": "Last tool invoked"
+      }
+    }
+  },
   "services": {
+    "send_message": {
+      "name": "Send message",
+      "description": "Send a text message to the OpenClaw gateway and fire the reply as an openclaw_message_received event.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "The message text to send to OpenClaw."
+        },
+        "source": {
+          "name": "Source",
+          "description": "Optional source hint."
+        },
+        "session_id": {
+          "name": "Session ID",
+          "description": "Optional conversation session ID."
+        },
+        "agent_id": {
+          "name": "Agent ID",
+          "description": "Optional agent ID override."
+        }
+      }
+    },
+    "clear_history": {
+      "name": "Clear history",
+      "description": "Clear the in-memory conversation history for a session.",
+      "fields": {
+        "session_id": {
+          "name": "Session ID",
+          "description": "Session ID to clear. If omitted, clears all sessions."
+        }
+      }
+    },
+    "invoke_tool": {
+      "name": "Invoke tool",
+      "description": "Invoke a single OpenClaw gateway tool via POST /tools/invoke.",
+      "fields": {
+        "tool": {
+          "name": "Tool",
+          "description": "Tool name to invoke."
+        },
+        "action": {
+          "name": "Action",
+          "description": "Optional action string passed to the tool endpoint."
+        },
+        "args": {
+          "name": "Args",
+          "description": "Tool-specific args object."
+        },
+        "session_key": {
+          "name": "Session key",
+          "description": "Optional target OpenClaw session key."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Optional dry-run flag (reserved by the gateway)."
+        },
+        "message_channel": {
+          "name": "Message channel",
+          "description": "Optional channel hint header."
+        },
+        "account_id": {
+          "name": "Account ID",
+          "description": "Optional account hint header."
+        }
+      }
+    },
     "query_image": {
       "name": "Query image",
       "description": "Take in images and answer questions about them",
@@ -102,12 +200,12 @@
         "model": {
           "name": "Model",
           "description": "The model",
-          "example": "gpt-4.1-mini"
+          "example": "openclaw:main"
         },
         "prompt": {
           "name": "Prompt",
           "description": "The text to ask about image",
-          "example": "What’s in this image?"
+          "example": "What's in this image?"
         },
         "images": {
           "name": "Images",
@@ -117,40 +215,6 @@
           "name": "Max Tokens",
           "description": "The maximum tokens",
           "example": "300"
-        }
-      }
-    },
-    "change_config": {
-      "name": "Change configuration",
-      "description": "Changes the configuration of the integration.",
-      "fields": {
-        "config_entry": {
-          "name": "Config Entry",
-          "description": "The config entry to update."
-        },
-        "api_key": {
-          "name": "API Key",
-          "description": "The API key."
-        },
-        "base_url": {
-          "name": "Base URL",
-          "description": "The base URL."
-        },
-        "api_version": {
-          "name": "API Version",
-          "description": "The API version."
-        },
-        "organization": {
-          "name": "Organization",
-          "description": "The organization."
-        },
-        "skip_authentication": {
-          "name": "Skip Authentication",
-          "description": "Skip authentication."
-        },
-        "api_provider": {
-          "name": "API Provider",
-          "description": "The API provider. (OpenAI or Azure)"
         }
       }
     },

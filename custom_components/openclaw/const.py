@@ -1,26 +1,56 @@
-"""Constants for the Extended OpenAI Conversation integration."""
+"""Constants for the OpenClaw integration."""
 
-DOMAIN = "extended_openai_conversation"
-DEFAULT_NAME = "Extended OpenAI Conversation"
-DEFAULT_CONVERSATION_NAME = "Extended OpenAI Conversation"
-DEFAULT_AI_TASK_NAME = "Extended OpenAI AI Task"
+DOMAIN = "openclaw"
+DEFAULT_NAME = "OpenClaw"
+DEFAULT_CONVERSATION_NAME = "OpenClaw Conversation"
+DEFAULT_AI_TASK_NAME = "OpenClaw AI Task"
 
-CONF_ORGANIZATION = "organization"
+# ---------------------------------------------------------------------------
+# OpenClaw gateway connection
+# ---------------------------------------------------------------------------
+CONF_GATEWAY_HOST = "gateway_host"
+CONF_GATEWAY_PORT = "gateway_port"
+CONF_GATEWAY_TOKEN = "gateway_token"
+CONF_USE_SSL = "use_ssl"
+CONF_VERIFY_SSL = "verify_ssl"
+CONF_AGENT_ID = "agent_id"
+
+DEFAULT_GATEWAY_HOST = "192.168.20.141"
+DEFAULT_GATEWAY_PORT = 18789
+DEFAULT_USE_SSL = False
+DEFAULT_VERIFY_SSL = True
+DEFAULT_AGENT_ID = "main"
+
+# Legacy key kept for backwards compatibility with the previous base_url-based
+# config entries. The value is always derived from host/port/use_ssl.
 CONF_BASE_URL = "base_url"
-DEFAULT_CONF_BASE_URL = "https://api.openai.com/v1"
-CONF_API_VERSION = "api_version"
-CONF_SKIP_AUTHENTICATION = "skip_authentication"
-DEFAULT_SKIP_AUTHENTICATION = False
-CONF_API_PROVIDER = "api_provider"
-API_PROVIDERS = [
-    {"key": "openai", "label": "OpenAI"},
-    {"key": "azure", "label": "Azure OpenAI"},
-]
-DEFAULT_API_PROVIDER = API_PROVIDERS[0]["key"]
 
-EVENT_AUTOMATION_REGISTERED = "automation_registered_via_extended_openai_conversation"
-EVENT_CONVERSATION_FINISHED = "extended_openai_conversation.conversation.finished"
 
+def build_base_url(host: str, port: int, use_ssl: bool = False) -> str:
+    """Return the OpenAI-compatible base URL for the gateway."""
+    scheme = "https" if use_ssl else "http"
+    return f"{scheme}://{host}:{port}/v1"
+
+
+def model_for_agent(agent_id: str | None) -> str:
+    """Return the OpenClaw model alias for an agent ID.
+
+    The gateway accepts the alias form ``openclaw:<agentId>`` as well as
+    ``openclaw/default``.
+    """
+    return f"openclaw:{agent_id or DEFAULT_AGENT_ID}"
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+EVENT_CONVERSATION_FINISHED = "openclaw.conversation.finished"
+EVENT_MESSAGE_RECEIVED = f"{DOMAIN}_message_received"
+EVENT_TOOL_INVOKED = f"{DOMAIN}_tool_invoked"
+
+# ---------------------------------------------------------------------------
+# Conversation / AI Task options
+# ---------------------------------------------------------------------------
 CONF_PROMPT = "prompt"
 DEFAULT_PROMPT = """You are a helpful AI voice assistant of Home Assistant that controls a real home.
 Your goal is to proactively improve the user's comfort.
@@ -30,7 +60,7 @@ Your goal is to proactively improve the user's comfort.
 - Current Area: {{area_id(current_device_id)}}
 
 ## Workspace
-Your workspace is at: {{extended_openai.working_directory()}}
+Your workspace is at: {{openclaw.working_directory()}}
 
 ## Guidelines
 - Answer in plain text only.
@@ -54,7 +84,7 @@ Your workspace is at: {{extended_openai.working_directory()}}
 Available Devices:
 ```csv
 entity_id,name,state,area_id,aliases
-{% for entity in extended_openai.exposed_entities() -%}
+{% for entity in openclaw.exposed_entities() -%}
 {{ entity.entity_id }},{{ entity.name }},{{ entity.state }},{{area_id(entity.entity_id)}},{{entity.aliases | join('/')}}
 {% endfor -%}
 ```
@@ -78,14 +108,8 @@ When a skill file references a relative path, resolve it against the skill's loc
 {{user_input.extra_system_prompt | default('', true)}}
 """
 CONF_CHAT_MODEL = "chat_model"
-DEFAULT_CHAT_MODEL = "gpt-5-mini"
+DEFAULT_CHAT_MODEL = model_for_agent(DEFAULT_AGENT_ID)
 
-MODEL_TOKEN_PARAMETER_SUPPORT = (
-    {
-        "pattern": r"(^|-)(gpt-4o|gpt-5|o1|o3|o4)",
-        "token_param": "max_completion_tokens",
-    },
-)
 DEFAULT_TOKEN_PARAM = "max_tokens"
 CONF_MAX_TOKENS = "max_tokens"
 DEFAULT_MAX_TOKENS = 500
@@ -208,7 +232,7 @@ DEFAULT_CONF_FUNCTION_TOOLS = [
         },
         "function": {
             "type": "read_file",
-            "path": "{{extended_openai.skill_dir(name)}}/{{file}}",
+            "path": "{{openclaw.skill_dir(name)}}/{{file}}",
         },
     },
     {
@@ -235,17 +259,8 @@ CONTEXT_TRUNCATE_STRATEGIES = [{"key": "clear", "label": "Clear All Messages"}]
 CONF_CONTEXT_TRUNCATE_STRATEGY = "context_truncate_strategy"
 DEFAULT_CONTEXT_TRUNCATE_STRATEGY = CONTEXT_TRUNCATE_STRATEGIES[0]["key"]
 
-# Service Tier options (for GPT-5 models)
-CONF_SERVICE_TIER = "service_tier"
-DEFAULT_SERVICE_TIER = "flex"
-SERVICE_TIER_OPTIONS = ["auto", "default", "flex", "priority"]
-
-# Reasoning Effort options (for o1, o3, o4, gpt-5 models)
-CONF_REASONING_EFFORT = "reasoning_effort"
 CONF_EXTRA_BODY = "extra_body"
-DEFAULT_REASONING_EFFORT = "low"
 DEFAULT_EXTRA_BODY = ""
-REASONING_EFFORT_OPTIONS = ["low", "medium", "high"]
 
 SERVICE_QUERY_IMAGE = "query_image"
 
@@ -256,33 +271,15 @@ CONF_ADVANCED_OPTIONS = "advanced_options"
 DEFAULT_ADVANCED_OPTIONS = False
 
 # Model-specific parameter configurations
-# Default configuration for standard models (gpt-4, gpt-4o, etc.)
+# The OpenClaw gateway forwards model aliases to the backing agent; the
+# generic OpenAI-compatible parameter set is used for all ``openclaw:*``
+# aliases.
 DEFAULT_MODEL_CONFIG = {
     "supports_top_p": True,
     "supports_temperature": True,
     "supports_max_tokens": True,
     "supports_max_completion_tokens": False,
-    "supports_reasoning_effort": False,
-    "supports_service_tier": False,
 }
-
-# Pattern-based model configurations
-# Each entry: {"pattern": regex_string, "config": config_dict}
-# Patterns are matched in order; first match wins
-MODEL_CONFIG_PATTERNS = [
-    # Reasoning models (o1, o3, o4, gpt-5, etc.)
-    {
-        "pattern": r"^o[1-4]|^gpt-5",
-        "config": {
-            "supports_top_p": False,
-            "supports_temperature": False,
-            "supports_max_tokens": False,
-            "supports_max_completion_tokens": True,
-            "supports_reasoning_effort": True,
-            "supports_service_tier": True,
-        },
-    },
-]
 
 # AI Task default options (simpler than conversation - no prompt, just model/token settings)
 DEFAULT_AI_TASK_OPTIONS = {
@@ -301,15 +298,13 @@ SERVICE_RELOAD_SKILLS = "reload_skills"
 SERVICE_DOWNLOAD_SKILL = "download_skill"
 
 # GitHub repository for downloadable skills
-GITHUB_REPO_OWNER = "jekalmin"
-GITHUB_REPO_NAME = "extended_openai_conversation"
+GITHUB_REPO_OWNER = "mtorazzi"
+GITHUB_REPO_NAME = "openclaw-ha"
 GITHUB_SKILLS_BRANCH = "develop"
 GITHUB_SKILLS_PATH = "examples/skills"
 
 # Working Directory
-DEFAULT_WORKING_DIRECTORY = (
-    "extended_openai_conversation/"  # /config/extended_openai_conversation/
-)
+DEFAULT_WORKING_DIRECTORY = "openclaw/"  # /config/openclaw/
 
 # File system and shell security settings
 SHELL_TIMEOUT = 300  # seconds
@@ -334,5 +329,57 @@ FILE_READ_SIZE_LIMIT = 1024 * 1024  # 1 MB
 
 # Default allowed directories for file operations
 DEFAULT_ALLOWED_DIRS = [
-    DEFAULT_WORKING_DIRECTORY,  # /config/extended_openai_conversation/
+    DEFAULT_WORKING_DIRECTORY,  # /config/openclaw/
 ]
+
+# ---------------------------------------------------------------------------
+# OpenClaw gateway services
+# ---------------------------------------------------------------------------
+SERVICE_SEND_MESSAGE = "send_message"
+SERVICE_CLEAR_HISTORY = "clear_history"
+SERVICE_INVOKE_TOOL = "invoke_tool"
+
+# Service / event attributes
+ATTR_MESSAGE = "message"
+ATTR_SOURCE = "source"
+ATTR_SESSION_ID = "session_id"
+ATTR_MODEL = "model"
+ATTR_TIMESTAMP = "timestamp"
+ATTR_TOOL = "tool"
+ATTR_ACTION = "action"
+ATTR_ARGS = "args"
+ATTR_SESSION_KEY = "session_key"
+ATTR_DRY_RUN = "dry_run"
+ATTR_MESSAGE_CHANNEL = "message_channel"
+ATTR_ACCOUNT_ID = "account_id"
+ATTR_AGENT_ID = "agent_id"
+ATTR_OK = "ok"
+ATTR_RESULT = "result"
+ATTR_ERROR = "error"
+ATTR_DURATION_MS = "duration_ms"
+
+# ---------------------------------------------------------------------------
+# OpenClaw gateway API endpoints
+# ---------------------------------------------------------------------------
+# The gateway exposes the OpenAI-compatible endpoints. The integration only
+# ever uses /v1/chat/completions and /v1/models; /v1/responses is never
+# called (it rejects several keys with HTTP 400).
+API_MODELS = "/v1/models"
+API_CHAT_COMPLETIONS = "/v1/chat/completions"
+API_TOOLS_INVOKE = "/tools/invoke"
+
+# ---------------------------------------------------------------------------
+# Coordinator / sensor data keys
+# ---------------------------------------------------------------------------
+DATA_STATUS = "status"
+DATA_MODEL = "model"
+DATA_CONNECTED = "connected"
+DATA_LAST_ACTIVITY = "last_activity"
+DATA_LAST_TOOL_NAME = "last_tool_name"
+DATA_LAST_TOOL_STATUS = "last_tool_status"
+DATA_LAST_TOOL_DURATION_MS = "last_tool_duration_ms"
+DATA_LAST_TOOL_INVOKED_AT = "last_tool_invoked_at"
+DATA_LAST_TOOL_ERROR = "last_tool_error"
+DATA_LAST_TOOL_RESULT_PREVIEW = "last_tool_result_preview"
+
+DEFAULT_SCAN_INTERVAL = 30  # seconds

@@ -1,9 +1,10 @@
-"""AI Task integration for Extended OpenAI Conversation."""
+"""AI Task integration for the OpenClaw integration."""
 
 from __future__ import annotations
 
 from json import JSONDecodeError
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from homeassistant.components import ai_task, conversation
@@ -13,14 +14,37 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util.json import json_loads
 
-from .entity import ExtendedOpenAIBaseLLMEntity
+from .entity import OpenClawBaseLLMEntity
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigSubentry
 
-    from . import ExtendedOpenAIConfigEntry
+    from . import OpenClawConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+
+
+def _extract_json(text: str) -> str:
+    """Best-effort extraction of a JSON object from an LLM response.
+
+    The OpenClaw gateway forwards ``response_format`` to the backing agent but
+    does not enforce it, so the model may wrap the JSON in markdown fences or
+    add prose around it.
+    """
+    candidate = text.strip()
+
+    if match := _CODE_FENCE_RE.search(candidate):
+        candidate = match.group(1).strip()
+
+    # Fall back to the outermost {...} block.
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = candidate[start : end + 1]
+
+    return candidate
 
 
 async def async_setup_entry(
@@ -34,19 +58,19 @@ async def async_setup_entry(
             continue
 
         async_add_entities(
-            [ExtendedOpenAITaskEntity(config_entry, subentry)],
+            [OpenClawTaskEntity(config_entry, subentry)],
             config_subentry_id=subentry.subentry_id,
         )
 
 
-class ExtendedOpenAITaskEntity(
+class OpenClawTaskEntity(
     ai_task.AITaskEntity,
-    ExtendedOpenAIBaseLLMEntity,
+    OpenClawBaseLLMEntity,
 ):
-    """Extended OpenAI AI Task entity."""
+    """OpenClaw AI Task entity."""
 
     def __init__(
-        self, entry: ExtendedOpenAIConfigEntry, subentry: ConfigSubentry
+        self, entry: OpenClawConfigEntry, subentry: ConfigSubentry
     ) -> None:
         """Initialize the entity."""
         super().__init__(entry, subentry)
@@ -88,7 +112,7 @@ class ExtendedOpenAITaskEntity(
             )
 
         try:
-            data = json_loads(text)
+            data = json_loads(_extract_json(text))
         except JSONDecodeError as err:
             _LOGGER.error(
                 "Failed to parse JSON response: %s. Response: %s",

@@ -1,4 +1,4 @@
-"""Config flow for OpenAI Conversation integration."""
+"""Config flow for the OpenClaw integration."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from homeassistant.config_entries import (
     ConfigSubentryFlow,
     SubentryFlowResult,
 )
-from homeassistant.const import CONF_API_KEY, CONF_NAME
+from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -30,82 +29,73 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TemplateSelector,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 
 from .const import (
-    API_PROVIDERS,
     CONF_ADVANCED_OPTIONS,
-    CONF_API_PROVIDER,
-    CONF_API_VERSION,
-    CONF_BASE_URL,
+    CONF_AGENT_ID,
     CONF_CHAT_MODEL,
     CONF_CONTEXT_THRESHOLD,
     CONF_CONTEXT_TRUNCATE_STRATEGY,
     CONF_EXTRA_BODY,
     CONF_FUNCTION_TOOLS,
+    CONF_GATEWAY_HOST,
+    CONF_GATEWAY_PORT,
+    CONF_GATEWAY_TOKEN,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
-    CONF_ORGANIZATION,
     CONF_PROMPT,
-    CONF_REASONING_EFFORT,
-    CONF_SERVICE_TIER,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_SKILLS,
-    CONF_SKIP_AUTHENTICATION,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_USE_SSL,
+    CONF_VERIFY_SSL,
     CONTEXT_TRUNCATE_STRATEGIES,
     DEFAULT_ADVANCED_OPTIONS,
+    DEFAULT_AGENT_ID,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
-    DEFAULT_API_PROVIDER,
     DEFAULT_CHAT_MODEL,
-    DEFAULT_CONF_BASE_URL,
     DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_EXTRA_BODY,
+    DEFAULT_GATEWAY_HOST,
+    DEFAULT_GATEWAY_PORT,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
     DEFAULT_NAME,
     DEFAULT_PROMPT,
-    DEFAULT_REASONING_EFFORT,
-    DEFAULT_SERVICE_TIER,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
-    DEFAULT_SKIP_AUTHENTICATION,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    DEFAULT_USE_SSL,
+    DEFAULT_VERIFY_SSL,
     DOMAIN,
-    REASONING_EFFORT_OPTIONS,
-    SERVICE_TIER_OPTIONS,
+    model_for_agent,
 )
-from .helpers import get_authenticated_client, get_model_config
+from .helpers import get_model_config, get_openclaw_client
 from .skills import SkillManager
 
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
-        vol.Optional(CONF_NAME, default="ChatGPT"): str,
-        vol.Required(CONF_API_KEY): str,
-        vol.Optional(CONF_BASE_URL, default=DEFAULT_CONF_BASE_URL): str,
-        vol.Optional(CONF_API_VERSION): str,
-        vol.Optional(CONF_ORGANIZATION): str,
-        vol.Optional(
-            CONF_SKIP_AUTHENTICATION, default=DEFAULT_SKIP_AUTHENTICATION
-        ): bool,
-        vol.Optional(CONF_API_PROVIDER, default=DEFAULT_API_PROVIDER): SelectSelector(
-            SelectSelectorConfig(
-                options=[
-                    SelectOptionDict(
-                        value=api_provider["key"], label=api_provider["label"]
-                    )
-                    for api_provider in API_PROVIDERS
-                ],
-                mode=SelectSelectorMode.DROPDOWN,
-            )
+        vol.Required(CONF_GATEWAY_HOST, default=DEFAULT_GATEWAY_HOST): TextSelector(),
+        vol.Required(CONF_GATEWAY_PORT, default=DEFAULT_GATEWAY_PORT): vol.All(
+            int, vol.Range(min=1, max=65535)
         ),
+        vol.Required(CONF_GATEWAY_TOKEN): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
+        vol.Optional(CONF_USE_SSL, default=DEFAULT_USE_SSL): BooleanSelector(),
+        vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): BooleanSelector(),
+        vol.Optional(CONF_AGENT_ID, default=DEFAULT_AGENT_ID): TextSelector(),
     }
 )
 
@@ -131,38 +121,17 @@ DEFAULT_OPTIONS = types.MappingProxyType(
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
-    """Validate the user input allows us to connect.
+    """Validate the user input allows us to connect to the gateway.
 
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+    Uses the same OpenAI-compatible client the integration uses at runtime and
+    performs ``GET /v1/models``.
     """
-    api_key = data[CONF_API_KEY]
-    base_url = data.get(CONF_BASE_URL)
-    api_version = data.get(CONF_API_VERSION)
-    organization = data.get(CONF_ORGANIZATION)
-    skip_authentication = data.get(CONF_SKIP_AUTHENTICATION, False)
-    api_provider = data.get(CONF_API_PROVIDER)
-
-    if base_url == DEFAULT_CONF_BASE_URL:
-        # Do not set base_url if using OpenAI for case of OpenAI's base_url change
-        base_url = None
-        data.pop(CONF_BASE_URL)
-
-    if api_provider == "azure" and not base_url:
-        raise HomeAssistantError("Azure OpenAI requires a custom base URL.")
-
-    await get_authenticated_client(
-        hass=hass,
-        api_key=api_key,
-        base_url=base_url,
-        api_version=api_version,
-        organization=organization,
-        api_provider=api_provider,
-        skip_authentication=skip_authentication,
-    )
+    client = get_openclaw_client(hass, data)
+    await client.models.list()
 
 
-class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for OpenAI Conversation."""
+class OpenClawConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for OpenClaw."""
 
     VERSION = 2
 
@@ -187,19 +156,23 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
+            agent_id = user_input.get(CONF_AGENT_ID, DEFAULT_AGENT_ID)
+            model = model_for_agent(agent_id)
+            conversation_options = {**DEFAULT_OPTIONS, CONF_CHAT_MODEL: model}
+            ai_task_options = {**DEFAULT_AI_TASK_OPTIONS, CONF_CHAT_MODEL: model}
             return self.async_create_entry(
                 title=user_input.get(CONF_NAME, DEFAULT_NAME),
                 data=user_input,
                 subentries=[
                     {
                         "subentry_type": "conversation",
-                        "data": dict(DEFAULT_OPTIONS),
+                        "data": conversation_options,
                         "title": DEFAULT_CONVERSATION_NAME,
                         "unique_id": None,
                     },
                     {
                         "subentry_type": "ai_task_data",
-                        "data": dict(DEFAULT_AI_TASK_OPTIONS),
+                        "data": ai_task_options,
                         "title": DEFAULT_AI_TASK_NAME,
                         "unique_id": None,
                     },
@@ -217,13 +190,13 @@ class ExtendedOpenAIConversationConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return subentries supported by this integration."""
         return {
-            "conversation": ExtendedOpenAISubentryFlowHandler,
-            "ai_task_data": ExtendedOpenAIAITaskSubentryFlowHandler,
+            "conversation": OpenClawSubentryFlowHandler,
+            "ai_task_data": OpenClawAITaskSubentryFlowHandler,
         }
 
 
-class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
-    """Flow for managing OpenAI subentries."""
+class OpenClawSubentryFlowHandler(ConfigSubentryFlow):
+    """Flow for managing OpenClaw conversation subentries."""
 
     options: dict[str, Any]
     _temp_data: dict[str, Any] | None = None
@@ -282,7 +255,9 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                 data=user_input,
             )
 
-        schema = self.openai_config_option_schema(self.options, self._available_skills)
+        schema = self.conversation_config_option_schema(
+            self.options, self._available_skills
+        )
 
         if self._is_new:
             schema = {
@@ -342,43 +317,8 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
 
-        # Add reasoning_effort if supported (o1, o3, o4, gpt-5 models)
-        if model_config.get("supports_reasoning_effort"):
-            schema[
-                vol.Optional(
-                    CONF_REASONING_EFFORT,
-                    default=DEFAULT_REASONING_EFFORT,
-                )
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in REASONING_EFFORT_OPTIONS
-                    ],
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            )
-
-        # Add service_tier if supported (o3, o4, gpt-5 models)
-        if model_config.get("supports_service_tier"):
-            schema[
-                vol.Optional(
-                    CONF_SERVICE_TIER,
-                    default=DEFAULT_SERVICE_TIER,
-                )
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in SERVICE_TIER_OPTIONS
-                    ],
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            )
-
-        # Add extra_body — passthrough for OpenAI-compatible backends
-        # (ollama, llama.cpp, vLLM, LM Studio). Accepts a Jinja-templatable
-        # JSON string; empty disables.
+        # Add extra_body — passthrough for OpenAI-compatible request fields.
+        # Accepts a Jinja-templatable JSON string; empty disables.
         schema[
             vol.Optional(
                 CONF_EXTRA_BODY,
@@ -412,10 +352,10 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
             for skill in skill_manager.get_all_skills()
         ]
 
-    def openai_config_option_schema(
+    def conversation_config_option_schema(
         self, options: dict[str, Any], skills: list[dict[str, Any]] | None = None
     ) -> dict:
-        """Return a schema for OpenAI completion options."""
+        """Return a schema for OpenClaw completion options."""
         # If creating a new subentry and no skills in options, default to all loaded skills
         default_skills: list[str] = []
         if self._is_new and CONF_SKILLS not in options and skills:
@@ -490,7 +430,7 @@ class ExtendedOpenAISubentryFlowHandler(ConfigSubentryFlow):
         return schema
 
 
-class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
+class OpenClawAITaskSubentryFlowHandler(ConfigSubentryFlow):
     """Flow for managing AI Task subentries."""
 
     options: dict[str, Any]
@@ -619,43 +559,8 @@ class ExtendedOpenAIAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 )
             ] = NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))
 
-        # Add reasoning_effort if supported (o1, o3, o4, gpt-5 models)
-        if model_config.get("supports_reasoning_effort"):
-            schema[
-                vol.Optional(
-                    CONF_REASONING_EFFORT,
-                    default=DEFAULT_REASONING_EFFORT,
-                )
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in REASONING_EFFORT_OPTIONS
-                    ],
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            )
-
-        # Add service_tier if supported (o3, o4, gpt-5 models)
-        if model_config.get("supports_service_tier"):
-            schema[
-                vol.Optional(
-                    CONF_SERVICE_TIER,
-                    default=DEFAULT_SERVICE_TIER,
-                )
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value=opt, label=opt.capitalize())
-                        for opt in SERVICE_TIER_OPTIONS
-                    ],
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            )
-
-        # Add extra_body — passthrough for OpenAI-compatible backends
-        # (ollama, llama.cpp, vLLM, LM Studio). Accepts a Jinja-templatable
-        # JSON string; empty disables.
+        # Add extra_body — passthrough for OpenAI-compatible request fields.
+        # Accepts a Jinja-templatable JSON string; empty disables.
         schema[
             vol.Optional(
                 CONF_EXTRA_BODY,

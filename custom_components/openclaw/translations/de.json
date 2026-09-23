@@ -47,8 +47,6 @@
                     "data": {
                         "temperature": "Temperatur",
                         "top_p": "Top P",
-                        "reasoning_effort": "Reasoning effort",
-                        "service_tier": "Service tier",
                         "shorten_tool_call_id": "Shorten tool call IDs"
                     },
                     "data_description": {
@@ -77,8 +75,6 @@
                     "data": {
                         "temperature": "Temperature",
                         "top_p": "Top P",
-                        "reasoning_effort": "Reasoning effort",
-                        "service_tier": "Service tier",
                         "shorten_tool_call_id": "Shorten tool call IDs"
                     },
                     "data_description": {
@@ -148,13 +144,13 @@
                 },
                 "api_provider": {
                     "name": "Api Provider",
-                    "description": "The API provider. (OpenAI or Azure)"
+                    "description": "The API provider."
                 }
             }
         },
         "download_skill": {
             "name": "Download skill",
-            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/jekalmin/extended_openai_conversation/tree/develop/examples/skills",
+            "description": "Download a skill from the GitHub repository to your skills directory. Available skills: https://github.com/mtorazzi/openclaw-ha/tree/develop/examples/skills",
             "fields": {
                 "skill_name": {
                     "name": "Skill name",

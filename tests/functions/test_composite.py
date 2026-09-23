@@ -3,7 +3,7 @@
 import pytest
 
 # Import Tools and test helpers
-from custom_components.extended_openai_conversation.functions import CompositeFunction
+from custom_components.openclaw.functions import CompositeFunction
 from homeassistant.core import State
 from tests.helpers import prepare_function_tool_from_yaml
 

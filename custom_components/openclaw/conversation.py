@@ -1,7 +1,8 @@
-"""Extended OpenAI Conversation agent entity."""
+"""OpenClaw conversation agent entity."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -25,8 +26,13 @@ from homeassistant.helpers import intent, llm, template
 from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import ExtendedOpenAIConfigEntry
+from . import OpenClawConfigEntry
 from .const import (
+    ATTR_MESSAGE,
+    ATTR_MODEL,
+    ATTR_SESSION_ID,
+    ATTR_TIMESTAMP,
+    CONF_CHAT_MODEL,
     CONF_FUNCTION_TOOLS,
     CONF_PROMPT,
     CONF_SKILLS,
@@ -35,8 +41,9 @@ from .const import (
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
     EVENT_CONVERSATION_FINISHED,
+    EVENT_MESSAGE_RECEIVED,
 )
-from .entity import ExtendedOpenAIBaseLLMEntity
+from .entity import OpenClawBaseLLMEntity
 from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .functions import get_function
 from .helpers import get_exposed_entities
@@ -47,26 +54,26 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ExtendedOpenAIConfigEntry,
+    config_entry: OpenClawConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the OpenAI Conversation entities."""
+    """Set up the OpenClaw Conversation entities."""
     for subentry in config_entry.subentries.values():
         if subentry.subentry_type != "conversation":
             continue
 
         async_add_entities(
-            [ExtendedOpenAIAgentEntity(config_entry, subentry)],
+            [OpenClawAgentEntity(config_entry, subentry)],
             config_subentry_id=subentry.subentry_id,
         )
 
 
-class ExtendedOpenAIAgentEntity(
+class OpenClawAgentEntity(
     ConversationEntity,
     conversation.AbstractConversationAgent,
-    ExtendedOpenAIBaseLLMEntity,
+    OpenClawBaseLLMEntity,
 ):
-    """Extended OpenAI conversation agent."""
+    """OpenClaw conversation agent."""
 
     _attr_supports_streaming = True
     _attr_supported_features = ConversationEntityFeature.CONTROL
@@ -135,7 +142,6 @@ class ExtendedOpenAIAgentEntity(
         chat_log.content[0] = conversation.SystemContent(content=system_prompt)
 
         # Call the LLM
-
         try:
             await self._async_handle_chat_log(
                 chat_log,
@@ -148,7 +154,7 @@ class ExtendedOpenAIAgentEntity(
             intent_response = intent.IntentResponse(language=user_input.language)
             intent_response.async_set_error(
                 intent.IntentResponseErrorCode.UNKNOWN,
-                f"Sorry, I had a problem talking to OpenAI: {err}",
+                f"Sorry, I had a problem talking to OpenClaw: {err}",
             )
             return conversation.ConversationResult(
                 response=intent_response, conversation_id=user_input.conversation_id
@@ -179,10 +185,21 @@ class ExtendedOpenAIAgentEntity(
 
         # Get last assistant message
         last_content = chat_log.content[-1]
+        speech = ""
         if isinstance(last_content, conversation.AssistantContent):
-            intent_response.async_set_speech(last_content.content or "")
-        else:
-            intent_response.async_set_speech("")
+            speech = last_content.content or ""
+        intent_response.async_set_speech(speech)
+
+        # Notify listeners (e.g. the Lovelace chat card)
+        self.hass.bus.async_fire(
+            EVENT_MESSAGE_RECEIVED,
+            {
+                ATTR_MESSAGE: speech,
+                ATTR_SESSION_ID: chat_log.conversation_id,
+                ATTR_MODEL: self.subentry.data.get(CONF_CHAT_MODEL),
+                ATTR_TIMESTAMP: datetime.now(timezone.utc).isoformat(),
+            },
+        )
 
         return ConversationResult(
             response=intent_response,

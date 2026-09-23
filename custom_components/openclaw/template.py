@@ -1,4 +1,4 @@
-"""Template functions for Extended OpenAI Conversation."""
+"""Template functions for the OpenClaw integration."""
 
 from __future__ import annotations
 
@@ -20,26 +20,26 @@ _LOGGER = logging.getLogger(__name__)
 
 DATA_TEMPLATE_MANAGER = "template_manager"
 
-TEMPLATE_EXTENDED_OPENAI = "extended_openai"
+TEMPLATE_OPENCLAW = "openclaw"
 TEMPLATE_GET_ENTITIES = "exposed_entities"
 TEMPLATE_WORKING_DIRECTORY = "working_directory"
 TEMPLATE_SKILL_DIR = "skill_dir"
 
 
 async def async_setup_templates(hass: HomeAssistant) -> bool:
-    """Set up template functions for Extended OpenAI Conversation."""
+    """Set up template functions for the OpenClaw integration."""
     hass.data.setdefault(DOMAIN, {})
     if hass.data[DOMAIN].get(DATA_TEMPLATE_MANAGER):
         return True
 
-    manager = ExtendedOpenAITemplateManager(hass)
+    manager = OpenClawTemplateManager(hass)
     hass.data[DOMAIN][DATA_TEMPLATE_MANAGER] = manager
     await manager.async_setup()
     return True
 
 
 async def async_unload_templates(hass: HomeAssistant) -> bool:
-    """Unload template functions for Extended OpenAI Conversation."""
+    """Unload template functions for the OpenClaw integration."""
     if len(hass.config_entries.async_entries(DOMAIN)) == 1:
         manager = hass.data.get(DOMAIN, {}).get(DATA_TEMPLATE_MANAGER)
         if manager:
@@ -48,13 +48,13 @@ async def async_unload_templates(hass: HomeAssistant) -> bool:
     return True
 
 
-class ExtendedOpenAITemplateManager:
+class OpenClawTemplateManager:
     """Class to manage template functions."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the template manager."""
         self.hass = hass
-        self._extended_openai = {
+        self._openclaw = {
             TEMPLATE_GET_ENTITIES: self._get_exposed_entities,
             TEMPLATE_WORKING_DIRECTORY: self._get_working_directory,
             TEMPLATE_SKILL_DIR: self._get_skill_dir,
@@ -72,17 +72,7 @@ class ExtendedOpenAITemplateManager:
         return str(Path(self.hass.config.config_dir) / working_dir)
 
     def _get_skill_dir(self, name: str) -> str:
-        """Get the absolute directory path for a skill by name.
-
-        Args:
-            name: The skill name (e.g., 'crypto', 'skill-creator')
-
-        Returns:
-            Absolute path to the skill directory
-
-        Raises:
-            ValueError: If the skill is not found
-        """
+        """Get the absolute directory path for a skill by name."""
         manager = SkillManager._instance
         if manager is None:
             raise ValueError("SkillManager not initialized")
@@ -93,12 +83,12 @@ class ExtendedOpenAITemplateManager:
 
     async def async_setup(self) -> None:
         """Set up the template functions."""
-        _LOGGER.debug("Setting up Extended OpenAI Conversation template functions")
+        _LOGGER.debug("Setting up OpenClaw template functions")
 
         # Register in existing environments
         if "template.environment" in self.hass.data:
-            self.hass.data["template.environment"].globals[TEMPLATE_EXTENDED_OPENAI] = (
-                self._extended_openai
+            self.hass.data["template.environment"].globals[TEMPLATE_OPENCLAW] = (
+                self._openclaw
             )
 
         # Patch TemplateEnvironment
@@ -114,15 +104,13 @@ class ExtendedOpenAITemplateManager:
             if self._original_init:
                 self._original_init(template_env_self, hass, limited, strict, log_fn)  # type: ignore[unreachable]
             if hass:
-                template_env_self.globals[TEMPLATE_EXTENDED_OPENAI] = (
-                    self._extended_openai
-                )
+                template_env_self.globals[TEMPLATE_OPENCLAW] = self._openclaw
 
         TemplateEnvironment.__init__ = template_environment_init  # type: ignore[method-assign,assignment]
 
     async def async_on_unload(self) -> None:
         """Tear down the template functions."""
-        _LOGGER.debug("Tearing down Extended OpenAI Conversation template functions")
+        _LOGGER.debug("Tearing down OpenClaw template functions")
 
         if self._original_init:
             TemplateEnvironment.__init__ = self._original_init  # type: ignore[unreachable]
@@ -130,5 +118,5 @@ class ExtendedOpenAITemplateManager:
 
         if "template.environment" in self.hass.data:
             self.hass.data["template.environment"].globals.pop(
-                TEMPLATE_EXTENDED_OPENAI, None
+                TEMPLATE_OPENCLAW, None
             )

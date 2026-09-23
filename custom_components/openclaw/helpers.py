@@ -1,13 +1,11 @@
-"""Helper functions for Extended OpenAI Conversation component."""
+"""Helper functions for the OpenClaw integration."""
 
 from __future__ import annotations
 
-from functools import partial
 import logging
-import re
 from typing import Any
 
-from openai import AsyncAzureOpenAI, AsyncClient, AsyncOpenAI
+from openai import AsyncClient, AsyncOpenAI
 
 from homeassistant.components import conversation
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
@@ -17,33 +15,30 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.template import Template
 
 from .const import (
+    CONF_AGENT_ID,
+    CONF_GATEWAY_HOST,
+    CONF_GATEWAY_PORT,
+    CONF_GATEWAY_TOKEN,
+    CONF_USE_SSL,
+    CONF_VERIFY_SSL,
+    DEFAULT_AGENT_ID,
+    DEFAULT_GATEWAY_HOST,
+    DEFAULT_GATEWAY_PORT,
     DEFAULT_MODEL_CONFIG,
-    DEFAULT_TOKEN_PARAM,
-    MODEL_CONFIG_PATTERNS,
-    MODEL_TOKEN_PARAMETER_SUPPORT,
+    DEFAULT_USE_SSL,
+    DEFAULT_VERIFY_SSL,
+    build_base_url,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-AZURE_DOMAIN_PATTERN = r"\.(openai\.azure\.com|azure-api\.net|services\.ai\.azure\.com)"
-
-
 def get_model_config(model: str) -> dict[str, bool]:
-    """Get model-specific parameter configuration."""
-    # Check patterns in order; first match wins
-    for entry in MODEL_CONFIG_PATTERNS:
-        pattern = str(entry["pattern"])
-        entry_config = entry["config"]
-        if re.match(pattern, model, re.IGNORECASE):
-            # Type assertion since we know the structure from MODEL_CONFIG_PATTERNS
-            return (
-                dict(entry_config)
-                if isinstance(entry_config, dict)
-                else DEFAULT_MODEL_CONFIG
-            )
+    """Get model-specific parameter configuration.
 
-    # Default configuration for standard models (gpt-4, gpt-4o, etc.)
+    All OpenClaw model aliases use the generic OpenAI-compatible parameter
+    set; the gateway forwards the request to the backing agent.
+    """
     return DEFAULT_MODEL_CONFIG
 
 
@@ -73,20 +68,6 @@ def get_exposed_entities(hass: HomeAssistant) -> list[dict[str, Any]]:
             }
         )
     return exposed_entities
-
-
-def is_azure_url(base_url: str | None) -> bool:
-    """Check if the base URL is an Azure OpenAI URL."""
-    return bool(base_url and re.search(AZURE_DOMAIN_PATTERN, base_url))
-
-
-def get_token_param_for_model(model: str) -> str:
-    """Return the token parameter name for a model."""
-    model_lower = model.lower()
-    for entry in MODEL_TOKEN_PARAMETER_SUPPORT:
-        if re.search(entry["pattern"], model_lower):
-            return entry["token_param"]
-    return DEFAULT_TOKEN_PARAM
 
 
 def convert_to_template(
@@ -127,41 +108,31 @@ def _convert_to_template(
             _convert_to_template(setting, template_keys, hass, parents)
 
 
-async def get_authenticated_client(
+def get_openclaw_client(
     hass: HomeAssistant,
-    api_key: str,
-    base_url: str | None,
-    api_version: str | None,
-    organization: str | None,
-    api_provider: str | None,
-    skip_authentication: bool = False,
+    data: dict[str, Any],
 ) -> AsyncClient:
-    """Validate OpenAI authentication."""
+    """Build an OpenAI-compatible client pointed at the OpenClaw gateway.
 
-    client: AsyncClient
-    if base_url and (is_azure_url(base_url) or api_provider == "azure"):
-        client = AsyncAzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=base_url,
-            api_version=api_version,
-            organization=organization,
-            http_client=get_async_client(hass),
-        )
-    else:
-        client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            organization=organization,
-            http_client=get_async_client(hass),
-        )
+    The gateway implements ``POST /v1/chat/completions`` and ``GET /v1/models``.
+    Authentication uses the gateway bearer token; the selected agent is passed
+    both via the ``x-openclaw-agent-id`` header and, when no explicit model is
+    chosen, via the ``openclaw:<agent_id>`` model alias.
+    """
+    host = data.get(CONF_GATEWAY_HOST, DEFAULT_GATEWAY_HOST)
+    port = int(data.get(CONF_GATEWAY_PORT, DEFAULT_GATEWAY_PORT))
+    token = data[CONF_GATEWAY_TOKEN]
+    use_ssl = data.get(CONF_USE_SSL, DEFAULT_USE_SSL)
+    verify_ssl = data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+    agent_id = data.get(CONF_AGENT_ID, DEFAULT_AGENT_ID) or DEFAULT_AGENT_ID
 
-    if skip_authentication:
-        return client
+    headers: dict[str, str] = {}
+    if agent_id:
+        headers["x-openclaw-agent-id"] = agent_id
 
-    response = await hass.async_add_executor_job(
-        partial(client.models.list, timeout=10)
+    return AsyncOpenAI(
+        api_key=token,
+        base_url=build_base_url(host, port, use_ssl),
+        http_client=get_async_client(hass, verify_ssl=verify_ssl),
+        default_headers=headers,
     )
-
-    async for _ in response:
-        break
-    return client

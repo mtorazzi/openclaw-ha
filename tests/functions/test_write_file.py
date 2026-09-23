@@ -2,7 +2,7 @@
 
 import pytest
 
-from custom_components.extended_openai_conversation.functions import WriteFileFunction
+from custom_components.openclaw.functions import WriteFileFunction
 from tests.helpers import prepare_function_tool_from_yaml
 
 
@@ -18,7 +18,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test writing a file successfully from yaml definition."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "new_file.txt"
 
         function_tool = prepare_function_tool_from_yaml("write_file_example.yaml", 0)
@@ -42,7 +42,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test overwriting an existing file from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "existing.txt"
         test_file.write_text("old content")
 
@@ -63,7 +63,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test writing file with absolute path from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "absolute.txt"
 
         function_tool = prepare_function_tool_from_yaml("write_file_example.yaml", 1)
@@ -141,7 +141,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test writing file with templated path."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "templated.txt"
 
         function_tool = prepare_function_tool_from_yaml("write_file_example.yaml", 0)
@@ -160,7 +160,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test writing file with unicode content from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "unicode.txt"
 
         function_tool = prepare_function_tool_from_yaml("write_file_example.yaml", 3)
@@ -180,7 +180,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test writing file with empty content from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "empty.txt"
 
         function_tool = prepare_function_tool_from_yaml("write_file_example.yaml", 4)
@@ -200,7 +200,7 @@ class TestWriteFileFunctionYaml:
         self, hass, function, exposed_entities, llm_context, tmp_path
     ):
         """Test writing file with multiline content from yaml."""
-        workdir = tmp_path / "extended_openai_conversation"
+        workdir = tmp_path / "openclaw"
         test_file = workdir / "multiline.txt"
 
         function_tool = prepare_function_tool_from_yaml("write_file_example.yaml", 5)

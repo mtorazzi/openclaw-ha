@@ -1,4 +1,4 @@
-"""Fixtures for extended_openai_conversation tests."""
+"""Fixtures for openclaw tests."""
 
 from pathlib import Path
 import sys
@@ -19,8 +19,8 @@ from homeassistant.helpers.template import TemplateEnvironment  # noqa: E402
 def hass(tmp_path: Path) -> MagicMock:
     """Mock Home Assistant instance."""
     hass = MagicMock()
-    # Create extended_openai_conversation directory in tmp_path
-    workdir = tmp_path / "extended_openai_conversation"
+    # Create openclaw directory in tmp_path
+    workdir = tmp_path / "openclaw"
     workdir.mkdir(parents=True, exist_ok=True)
     hass.config.config_dir = str(tmp_path)
     hass.states = MagicMock()

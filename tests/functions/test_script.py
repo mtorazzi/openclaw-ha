@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # Import Tools and test helpers
-from custom_components.extended_openai_conversation.functions import ScriptFunction
+from custom_components.openclaw.functions import ScriptFunction
 from tests.helpers import prepare_function_tool_from_yaml
 
 
@@ -26,7 +26,7 @@ class TestScriptFunctionYaml:
         function_config = function_tool["function"]
 
         with patch(
-            "custom_components.extended_openai_conversation.functions.script.Script"
+            "custom_components.openclaw.functions.script.Script"
         ) as mock_script_class:
             # Setup mock
             mock_script = AsyncMock()
@@ -53,7 +53,7 @@ class TestScriptFunctionYaml:
         function_config = function_tool["function"]
 
         with patch(
-            "custom_components.extended_openai_conversation.functions.script.Script"
+            "custom_components.openclaw.functions.script.Script"
         ) as mock_script_class:
             mock_script = AsyncMock()
             mock_result = MagicMock()
