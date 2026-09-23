@@ -1,4 +1,4 @@
-"""Base entity for Extended OpenAI Conversation."""
+"""Base entity for the OpenClaw integration."""
 
 from __future__ import annotations
 
@@ -15,8 +15,7 @@ from openai.types.chat import (
     ChatCompletionToolParam,
 )
 import orjson
-import voluptuous as vol
-from voluptuous_openapi import convert
+import probatio
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
@@ -32,8 +31,6 @@ from .const import (
     CONF_EXTRA_BODY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
-    CONF_REASONING_EFFORT,
-    CONF_SERVICE_TIER,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -43,8 +40,6 @@ from .const import (
     DEFAULT_EXTRA_BODY,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
-    DEFAULT_REASONING_EFFORT,
-    DEFAULT_SERVICE_TIER,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
@@ -55,7 +50,7 @@ from .functions import get_function
 from .helpers import get_model_config
 
 if TYPE_CHECKING:
-    from . import ExtendedOpenAIConfigEntry
+    from . import OpenClawConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,8 +66,9 @@ def _shorten_tool_call_id(tool_call_id: str) -> str:
 
 
 def _adjust_schema(schema: dict[str, Any]) -> None:
-    """Adjust the schema to be compatible with OpenAI API."""
-    if schema["type"] == "object":
+    """Adjust the schema to be compatible with the OpenAI API."""
+    schema_type = schema.get("type")
+    if schema_type == "object":
         schema.setdefault("strict", True)
         schema.setdefault("additionalProperties", False)
         if "properties" not in schema:
@@ -85,10 +81,12 @@ def _adjust_schema(schema: dict[str, Any]) -> None:
         for prop, prop_info in schema["properties"].items():
             _adjust_schema(prop_info)
             if prop not in schema["required"]:
-                prop_info["type"] = [prop_info["type"], "null"]
+                prop_type = prop_info.get("type")
+                if isinstance(prop_type, str):
+                    prop_info["type"] = [prop_type, "null"]
                 schema["required"].append(prop)
 
-    elif schema["type"] == "array":
+    elif schema_type == "array":
         if "items" not in schema:
             return
 
@@ -96,14 +94,22 @@ def _adjust_schema(schema: dict[str, Any]) -> None:
 
 
 def _format_structured_output(
-    schema: vol.Schema, llm_api: llm.APIInstance | None
+    schema: probatio.Schema, llm_api: llm.APIInstance | None
 ) -> dict[str, Any]:
-    """Format the schema to be compatible with OpenAI API."""
-    result: dict[str, Any] = convert(
+    """Format the schema to be compatible with the OpenAI API.
+
+    Home Assistant migrated its schema layer to ``probatio``; the previous
+    ``voluptuous_openapi.convert`` helper no longer understands the
+    ``probatio.UNSUPPORTED`` sentinel returned by ``selector_serializer`` and
+    raises ``'_Unsupported' object is not subscriptable``. Use
+    ``probatio.to_openapi`` exactly like HA core does.
+    """
+    result: dict[str, Any] = probatio.to_openapi(
         schema,
         custom_serializer=(
             llm_api.custom_serializer if llm_api else llm.selector_serializer
         ),
+        openapi_version="3.1.0",
     )
 
     _adjust_schema(result)
@@ -160,15 +166,13 @@ def _convert_content_to_param(
     return messages
 
 
-class ExtendedOpenAIBaseLLMEntity(Entity):
-    """Extended OpenAI base entity."""
+class OpenClawBaseLLMEntity(Entity):
+    """OpenClaw base entity."""
 
     _attr_has_entity_name = True
     _attr_name = None
 
-    def __init__(
-        self, entry: ExtendedOpenAIConfigEntry, subentry: ConfigSubentry
-    ) -> None:
+    def __init__(self, entry: OpenClawConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
         self.entry = entry
         self.subentry = subentry
@@ -176,14 +180,14 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, subentry.subentry_id)},
             name=subentry.title,
-            manufacturer="OpenAI",
+            manufacturer="OpenClaw",
             model=subentry.data.get(CONF_CHAT_MODEL, DEFAULT_CHAT_MODEL),
             entry_type=dr.DeviceEntryType.SERVICE,
         )
 
     @property
     def _client(self) -> AsyncClient:
-        """Return the OpenAI client."""
+        """Return the OpenAI-compatible client for the gateway."""
         return self.entry.runtime_data
 
     async def _async_handle_chat_log(
@@ -193,7 +197,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
         exposed_entities: list[dict[str, Any]],
         llm_context: llm.LLMContext | None = None,
         structure_name: str | None = None,
-        structure: vol.Schema | None = None,
+        structure: probatio.Schema | None = None,
     ) -> None:
         """Generate an answer for the chat log with streaming support."""
         options = self.subentry.data
@@ -245,23 +249,8 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
                 CONF_TEMPERATURE, DEFAULT_TEMPERATURE
             )
 
-        # Add reasoning_effort if supported (o1, o3, o4, gpt-5 models)
-        if model_config.get("supports_reasoning_effort"):
-            api_kwargs["reasoning_effort"] = options.get(
-                CONF_REASONING_EFFORT, DEFAULT_REASONING_EFFORT
-            )
-
-        # Add service_tier if supported (o3, o4, gpt-5 models)
-        if model_config.get("supports_service_tier"):
-            api_kwargs["service_tier"] = options.get(
-                CONF_SERVICE_TIER, DEFAULT_SERVICE_TIER
-            )
-
         # Add extra_body if configured — passthrough for OpenAI-compatible
-        # backends that accept extra request-body fields (ollama, llama.cpp,
-        # vLLM, LM Studio, etc.). E.g. {"chat_template_kwargs":
-        # {"enable_thinking": false}} to disable Qwen3 reasoning, or
-        # {"cache_prompt": true} for llama.cpp prompt caching. Value is a
+        # backends that accept extra request-body fields. Value is a
         # Jinja-templatable JSON string; empty string disables.
         extra_body_raw = options.get(CONF_EXTRA_BODY, DEFAULT_EXTRA_BODY) or ""
         if extra_body_raw.strip():
@@ -274,16 +263,31 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             except (TemplateError, json.JSONDecodeError) as err:
                 _LOGGER.warning("Invalid extra_body for %s, ignoring: %s", model, err)
 
-        # Add structured output format if provided
+        # Add structured output format if provided. The OpenClaw gateway
+        # forwards ``response_format`` to the backing agent but does NOT
+        # enforce it, so we additionally instruct the model to emit JSON only.
         if structure is not None:
+            structured_output = _format_structured_output(structure, chat_log.llm_api)
             api_kwargs["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": slugify(structure_name),
+                    "name": slugify(structure_name or "response"),
                     "strict": True,
-                    "schema": _format_structured_output(structure, chat_log.llm_api),
+                    "schema": structured_output,
                 },
             }
+            instruction = (
+                "Respond with a single valid JSON object that conforms to this "
+                "JSON Schema. Output ONLY the JSON object, with no markdown code "
+                "fences and no prose.\n"
+                f"Schema: {json.dumps(structured_output)}"
+            )
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] = (
+                    f"{messages[0].get('content', '')}\n\n{instruction}"
+                )
+            else:
+                messages.insert(0, {"role": "system", "content": instruction})
 
         # Add tools if available
         tool_kwargs: dict[str, Any] = {}
@@ -391,7 +395,7 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
             delta = choice.delta
 
             if delta.content:
-                # Ensure content is a string (Mistral might return unexpected types)
+                # Ensure content is a string (some APIs return unexpected types)
                 content_value = delta.content
                 if not isinstance(content_value, str):
                     _LOGGER.warning(
@@ -521,7 +525,6 @@ class ExtendedOpenAIBaseLLMEntity(Entity):
 
         if strategy == "clear":
             # Keep only system prompt and last user message
-            # This is handled by refreshing the LLM data
             _LOGGER.info("Context threshold exceeded, conversation history cleared")
             last_user_message_index = None
             messages = chat_log.content
