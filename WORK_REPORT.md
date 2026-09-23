@@ -989,3 +989,221 @@ status or exception objects only — no prompt/message/token content.
 created and no branch other than `openclaw-integration` was touched.
 
 
+
+---
+
+# Continuation — `bash` client-tool collision (HA conversation 400)
+
+Base for this continuation: `openclaw-integration` @
+`232d6bd6ef892691331588f02b9b7eca13280c09`.
+
+A Home Assistant conversation failed with *"Sorry, I had a problem talking to
+OpenClaw: invalid tool configuration"*. Cause: the integration always loaded
+`DEFAULT_CONF_FUNCTION_TOOLS` and sent every entry as a client function tool,
+and one of those entries was named `bash` — a name reserved by the OpenClaw
+gateway (`bash` is an alias for its built-in `exec`). The gateway rejects any
+client tool that collides with its own namespace with HTTP 400
+`invalid tool configuration`. Diagnosis confirmed live before implementing
+(§27.1).
+
+## 25. Fix 1 — `bash` removed from the default tools
+
+Removed the `bash` entry from `DEFAULT_CONF_FUNCTION_TOOLS` in `const.py`. The
+default set is now exactly `execute_services`, `get_attributes`, `load_skill`.
+
+A shell-execution tool has no place in an integration serving Home Assistant and
+n8n; removing it is correct independently of the collision.
+
+Reference audit (`grep -rn '"bash"' custom_components/openclaw/`), all three
+hits accounted for:
+
+| reference | disposition |
+| --- | --- |
+| `const.py` — the removed spec | **removed** |
+| `functions/__init__.py:40` `"bash": BashFunction()` | **kept** — the `bash` *function type* registry entry, not a function spec sent to the gateway |
+| `functions/bash.py` `BashFunction` | **kept** — unreachable by default (no spec references it) |
+
+Documentation that advertised a `bash` function was updated so it does not
+describe a feature that no longer ships:
+
+- `examples/skills/README.md` — the "Execute Bash Commands" section was replaced
+  with a note explaining the reserved-name collision.
+- `docs/functions/bash.mdx` (legacy upstream Mintlify site) — a prominent warning
+  was added. The page is **kept** rather than deleted because 12 other pages
+  link to it (`docs/functions/{overview,read_file,write_file,edit_file}.mdx`,
+  `docs/configuration.mdx`) and removing it would break the site build.
+
+## 26. Fix 2 — defensive reserved-name filter
+
+**The list was derived from the gateway namespace, not from the task brief.** I
+read the pinned OpenClaw package at `/usr/lib/node_modules/openclaw/` and found
+two authoritative sources:
+
+1. `AGENT_RESERVED_TOOL_NAMES` in `dist/builtin-openclaw-*.mjs` — the tools the
+   embedded runtime *always* keeps: `bash, edit, find, grep, ls, read, write`.
+   This is the list the conflict check actually consumes
+   (`findClientToolNameConflicts({tools, existingToolNames:
+   [...clientConflictToolNames, ...AGENT_RESERVED_TOOL_NAMES]})`).
+2. The documented core tool groups in
+   `docs/gateway/config-tools/tool-policy.md`: `group:runtime`, `group:fs`,
+   `group:sessions`, `group:memory`, `group:web`, `group:ui`,
+   `group:automation`, `group:messaging`, `group:nodes`, `group:agents`,
+   `group:media`, plus the `cron` alias for `automations`.
+
+`RESERVED_TOOL_NAMES` in `const.py` is the union (59 names). The mechanism was
+also confirmed in `dist/agent-tool-definition-adapter-*.mjs`
+(`CLIENT_TOOL_NAME_CONFLICT_PREFIX`, `findClientToolNameConflicts`,
+`createClientToolNameConflictError`) and the HTTP mapping in
+`dist/openai-http-*.mjs` (`isClientToolNameConflictError(err)` →
+`sendInvalidRequest(res, "invalid tool configuration")`) — i.e. exactly the error
+the user saw.
+
+The filter lives in `entity.py` as `_client_tools(function_tools)`; it drops any
+spec whose `spec.name` is reserved and logs `Ignoring client tool %r: name is
+reserved by the OpenClaw gateway` — **name only, never the spec payload**.
+
+### Names that could not be confirmed as reserved
+
+The core built-in *name* list is not enumerated in one place in the package
+docs; `findClientToolNameConflicts` receives it assembled at runtime. I therefore
+took every name from the documented groups. Uncertainty:
+
+- `portal` (group:ui) and `openclaw` (group:automation) were taken from the docs
+  table but not observed in a dist artifact; the brief's minimum list does not
+  name them either.
+- Plugin-owned tools (`bundle-mcp`, plugin ids) are *not* included: they are
+  session-dependent and cannot be enumerated from a static list. A user who
+  configures an MCP-backed client tool with the same name as a loaded plugin
+  tool would still hit the gateway rejection.
+- The `sessions*`/`conversations*` split: I list the union; a name that is only
+  conditionally available is filtered anyway, which is the safe direction.
+
+Being conservative here is safe: an over-filtered name loses a client tool
+(visible as a warning), whereas an under-filtered name breaks the whole request.
+
+## 27. Fix 3 — no invented tools
+
+`conversation.py:_get_function_tools` no longer substitutes the defaults:
+
+```python
+function_tools_config = self.subentry.data.get(CONF_FUNCTION_TOOLS)
+if not function_tools_config:
+    return []
+```
+
+An absent/empty functions value therefore yields no client tools, and
+`entity._async_handle_chat_log` already only adds `tools` **and** `tool_choice`
+when the list is non-empty (`if tools:`), so an unconfigured conversation sends
+**no `tools` key at all**.
+
+The config flow no longer seeds the defaults:
+
+- `config_flow.py` — `DEFAULT_CONF_FUNCTION_TOOLS_STR = ""` (was
+  `yaml.dump(DEFAULT_CONF_FUNCTION_TOOLS, ...)`); the now-unused `yaml` import
+  and `DEFAULT_CONF_FUNCTION_TOOLS` import were removed.
+- `DEFAULT_OPTIONS[CONF_FUNCTION_TOOLS]` and the subentry schema's
+  `vol.Optional(CONF_FUNCTION_TOOLS, default=...)` therefore both default to the
+  empty string.
+
+**Decision on seeding:** seeding is kept but seeded *empty* — the field still
+exists in the options form (the user can paste the reference set), while the
+default no longer activates anything. This makes the three changes coherent: a
+user who never touches the field produces requests with **no** `tools` key.
+`DEFAULT_CONF_FUNCTION_TOOLS` in `const.py` is retained as an explicit opt-in
+reference set and is documented in `DOCS.md`.
+
+## 28. Verification
+
+### 28.1 Live gateway proof (the point of the task)
+
+Gateway `http://192.168.20.141:18789/v1`; token read from
+`/root/.openclaw/openclaw.json` → `gateway.auth.token` (48 chars; never printed,
+committed or logged). Request bodies were generated by the **real integration
+code** (`entity._client_tools`) via `/tmp/opencode/build_request.py`, so the
+guard under test is the shipped one.
+
+```bash
+TOKEN=$(python3 -c "import json;print(json.load(open('/root/.openclaw/openclaw.json'))['gateway']['auth']['token'])")
+URL=http://192.168.20.141:18789/v1/chat/completions
+
+# P1 — fixed full default tool set
+curl -sS -w "HTTP %{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -H "x-openclaw-agent-id: main" \
+  --data @/tmp/opencode/req_defaults.json "$URL"
+
+# P2 — no tools key at all
+curl -sS -w "HTTP %{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -H "x-openclaw-agent-id: main" \
+  --data @/tmp/opencode/req_none.json "$URL"
+
+# P3 — raw request declaring bash
+curl -sS -w "HTTP %{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -H "x-openclaw-agent-id: main" \
+  -d '{"model":"openclaw/default","messages":[{"role":"user","content":"Reply with exactly the word: PONG"}],"stream":false,"tools":[{"type":"function","function":{"name":"bash","description":"Execute a bash command in workspace.","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}}]}' \
+  "$URL"
+
+# P4 — the bash configuration after the integration filter removes it
+curl -sS -w "HTTP %{http_code}\n" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -H "x-openclaw-agent-id: main" \
+  --data @/tmp/opencode/req_bash.json "$URL"
+```
+
+Observed:
+
+| proof | request tools | HTTP | observed |
+| --- | --- | --- | --- |
+| P1 fixed default set | `execute_services`, `get_attributes`, `load_skill` | **200** | `content="PONG"`, `model="openclaw/default"` |
+| P2 no `tools` key | *(none)* | **200** | `content="PONG"`, `model="openclaw/default"` |
+| P3 declares `bash` | `bash` | **400** | `{"error":{"message":"invalid tool configuration","type":"invalid_request_error"}}` |
+| P4 `bash` config after the filter | *(none — dropped)* | **200** | `content="PONG"`, `model="openclaw/default"` |
+
+P3 proves the collision was the cause; P4 proves the shipped filter removes it.
+The pre-implementation probe (`/tmp/opencode/gw_probe.py`) reproduced the same
+matrix on the unmodified request builder: `execute_services` 200,
+`get_attributes` 200, `load_skill` 200, `bash` 400.
+
+### 28.2 Other checks
+
+| # | check | result | real evidence? |
+| --- | --- | --- | --- |
+| 1 | live gateway (above) | 200/200/400/200 | **yes** — real gateway, real HTTP codes |
+| 2 | AST cross-module import audit | `checked 239 relative-import names; failures=0` | **yes** — and reverting only the `ast.TypeAlias` branch reproduces exactly **3** false positives (`ai_task.py:22`, `conversation.py:51`, `entity.py:54` → `from __init__.py import OpenClawConfigEntry`), confirming the PEP 695 parser is load-bearing |
+| 3 | real import of all modules via stubbed `homeassistant` tree | `23/23 modules imported, PASS — failures: []` | **yes** — modules really execute (import graph), stubs are not HA runtime |
+| 4 | `find custom_components/openclaw -name "*.py" -print0 \| xargs -0 python3 -m py_compile` | clean, exit 0 | weak — floor only |
+| 5 | `grep -rn "extended_openai_conversation" custom_components/openclaw hacs.json` | empty, exit 1 | **yes** |
+| 6 | `manifest.json` `domain` | exactly `openclaw`; name `OpenClaw OpenAI Integration` | **yes** |
+| 7 | `pyflakes` over the four changed files | 0 issues (the 3 pre-existing `__init__.py` aliased-import notices are unchanged) | **yes** |
+| 8 | behavioural checks (`/tmp/opencode/behavior_test.py`, real code + stubs) | `PASS` — no `bash` in defaults; 3 defaults; absent/empty/whitespace → `[]`; explicit defaults still usable; reserved names dropped; all 18 task-minimum names covered | **yes** for the pure-Python logic; the SDK `ChatCompletionToolParam` wrapper is stubbed |
+
+The 239-name audit is 240 previous minus 1: `conversation.py` no longer imports
+`DEFAULT_CONF_FUNCTION_TOOLS`.
+
+### 28.3 Honestly unverified
+
+- No Home Assistant runtime here. The full conversation path
+  (HA → LLM Assist API → SDK → gateway) was **not** executed inside HA; the
+  request body was reconstructed from the shipped code and sent to the real
+  gateway.
+- `entity._client_tools` was exercised with the stubbed OpenAI SDK, so the
+  `ChatCompletionToolParam` construction is not runtime-verified (it is
+  unchanged in shape from the code that was already in place).
+- The reserved list cannot be exhaustive for plugin/MCP-owned tools (§26).
+- Config-flow form rendering with the new empty default is static/import-level
+  only.
+
+## 29. Files changed in this continuation
+
+- `custom_components/openclaw/const.py` — removed the `bash` spec; added
+  `RESERVED_TOOL_NAMES`; comment on `DEFAULT_CONF_FUNCTION_TOOLS`.
+- `custom_components/openclaw/entity.py` — `_client_tools` filter, name-only
+  warning.
+- `custom_components/openclaw/conversation.py` — unconfigured means no tools.
+- `custom_components/openclaw/config_flow.py` — empty seeded default; removed
+  the `yaml` import.
+- `DOCS.md` — new "Client tools (functions)" section.
+- `examples/skills/README.md`, `docs/functions/bash.mdx` — bash documentation
+  corrected.
+- `WORK_REPORT.md` — this section.
+
+`domain` remains exactly `openclaw`; the display name is unchanged; no tags were
+created and no branch other than `openclaw-integration` was touched.

@@ -100,6 +100,25 @@ The base URL is derived as `http(s)://<host>:<port>/v1`.
   advanced options (temperature, top_p, extra_body, shorten tool call IDs).
 - **AI Task agent** — model, max tokens, advanced options.
 
+### Client tools (functions)
+
+The conversation agent sends **no** client tools unless you explicitly configure
+the **Functions** field of its subentry. An empty or absent field means the
+`tools` (and `tool_choice`) key is omitted from the request entirely; the
+integration never activates a built-in tool set on its own.
+
+The OpenClaw gateway reserves its own tool namespace. A client tool whose name
+collides with a built-in OpenClaw tool (`bash`, `exec`, `read`, `write`,
+`sessions`, `web_search`, …) makes the gateway reject the whole request with
+HTTP 400 `invalid tool configuration`. The integration filters any such name
+before sending the request and logs a warning; `bash` is the case that
+previously broke conversations (it is an alias for the gateway's `exec`).
+
+To opt in to the reference tool set, paste the `DEFAULT_CONF_FUNCTION_TOOLS`
+YAML from `custom_components/openclaw/const.py` into the Functions field. It
+contains only `execute_services`, `get_attributes` and `load_skill` — no
+shell-execution tool.
+
 ## Services
 
 ### `openclaw.send_message`

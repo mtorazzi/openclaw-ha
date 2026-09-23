@@ -111,30 +111,14 @@ To read files from your skill's directory, configure the `load_skill` function:
 
 This allows the AI to load data files, or other resources bundled with your skill.
 
-#### Execute Bash Commands
+#### Shell execution is not part of the shipped tool set
 
-To enable bash command execution in the workspace, configure the `bash` function:
-
-```yaml
-- spec:
-    name: bash
-    description: Execute a bash command in workspace.
-    parameters:
-      type: object
-      properties:
-        command:
-          type: string
-          description: Bash command to execute
-      required:
-      - command
-  function:
-    type: bash
-    command: '{{command}}'
-```
-
-This allows skills to run shell commands, execute scripts, call external programs, and process data using command-line tools.
-
-**Security Note:** Bash execution is restricted to the workspace directory (by default `<config directory>/extended_openai_conversation/`) and has deny patterns for destructive commands.
+The OpenClaw gateway reserves the `bash` tool name (`bash` is an alias for its
+own `exec` tool) and rejects any client-declared function whose name collides
+with its namespace. The OpenClaw integration therefore does not ship a `bash`
+function in its default tools, and the integration's tool guard filters any
+reserved name before the request is sent. Do not configure a shell-execution
+function for a conversation that talks to the OpenClaw gateway.
 
 ## Managing Skills
 

@@ -35,7 +35,6 @@ from .const import (
     CONF_FUNCTION_TOOLS,
     CONF_PROMPT,
     CONF_SKILLS,
-    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_PROMPT,
     DEFAULT_WORKING_DIRECTORY,
     DOMAIN,
@@ -242,13 +241,20 @@ class OpenClawAgentEntity(
         return get_exposed_entities(self.hass)
 
     def _get_function_tools(self) -> list[dict[str, Any]]:
-        """Get custom functions configuration."""
+        """Get custom functions configuration.
+
+        An unconfigured functions list means **no client tools**: the
+        integration never substitutes a built-in default tool set on its own
+        initiative. The defaults are only used when the user has explicitly put
+        them in the functions field.
+        """
         try:
             function_tools_config = self.subentry.data.get(CONF_FUNCTION_TOOLS)
-            function_tools: list[dict[str, Any]] | None = (
-                yaml.safe_load(function_tools_config)
-                if function_tools_config
-                else DEFAULT_CONF_FUNCTION_TOOLS
+            if not function_tools_config:
+                return []
+
+            function_tools: list[dict[str, Any]] | None = yaml.safe_load(
+                function_tools_config
             )
             if function_tools:
                 for function_tool in function_tools:

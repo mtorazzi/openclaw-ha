@@ -8,7 +8,6 @@ from typing import Any
 
 from openai._exceptions import APIConnectionError, AuthenticationError
 import voluptuous as vol
-import yaml
 
 from homeassistant.config_entries import (
     ConfigEntry,
@@ -60,7 +59,6 @@ from .const import (
     DEFAULT_AI_TASK_NAME,
     DEFAULT_AI_TASK_OPTIONS,
     DEFAULT_CHAT_MODEL,
-    DEFAULT_CONF_FUNCTION_TOOLS,
     DEFAULT_CONTEXT_THRESHOLD,
     DEFAULT_CONTEXT_TRUNCATE_STRATEGY,
     DEFAULT_CONVERSATION_NAME,
@@ -99,9 +97,12 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     }
 )
 
-DEFAULT_CONF_FUNCTION_TOOLS_STR = yaml.dump(
-    DEFAULT_CONF_FUNCTION_TOOLS, sort_keys=False
-)
+# The functions field is intentionally seeded **empty**. The integration must
+# not activate a built-in tool set on its own initiative: a conversation with
+# an empty (or absent) functions value sends no ``tools`` array at all. Users
+# who want the reference set can paste ``DEFAULT_CONF_FUNCTION_TOOLS`` (from
+# ``const.py``, documented in ``DOCS.md``) into the field themselves.
+DEFAULT_CONF_FUNCTION_TOOLS_STR = ""
 
 DEFAULT_OPTIONS = types.MappingProxyType(
     {

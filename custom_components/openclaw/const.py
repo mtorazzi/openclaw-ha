@@ -132,6 +132,15 @@ DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION = 10
 CONF_SHORTEN_TOOL_CALL_ID = "shorten_tool_call_id"
 DEFAULT_SHORTEN_TOOL_CALL_ID = False
 CONF_FUNCTION_TOOLS = "functions"
+# Reference set of client-side function tools for the conversation agent.
+#
+# This is **not** applied automatically: a conversation with no configured
+# ``functions`` value sends no ``tools`` array at all (see
+# ``conversation._get_function_tools``). It exists so a user can explicitly
+# paste it into the Functions field to opt in. It intentionally contains no
+# shell-execution tool: ``bash`` is a reserved OpenClaw gateway tool name and
+# the gateway rejects any client tool that collides with its own namespace
+# (HTTP 400 "invalid tool configuration").
 DEFAULT_CONF_FUNCTION_TOOLS = [
     {
         "spec": {
@@ -245,24 +254,106 @@ DEFAULT_CONF_FUNCTION_TOOLS = [
             "path": "{{openclaw.skill_dir(name)}}/{{file}}",
         },
     },
-    {
-        "spec": {
-            "name": "bash",
-            "description": "Execute a bash command in workspace.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Bash command to execute",
-                    },
-                },
-                "required": ["command"],
-            },
-        },
-        "function": {"type": "bash", "command": "{{command}}"},
-    },
 ]
+
+# ---------------------------------------------------------------------------
+# Reserved OpenClaw tool names
+# ---------------------------------------------------------------------------
+# A client-declared function tool whose name collides with a tool that already
+# exists in the OpenClaw agent runtime is rejected by the gateway with HTTP 400
+# ("invalid tool configuration", see ``isClientToolNameConflictError`` in
+# ``dist/agent-tool-definition-adapter-*.mjs``). ``bash`` is the collision that
+# broke conversations: it is accepted as an alias for the built-in ``exec``.
+#
+# The set below is derived from the actual gateway namespace, not guessed:
+#   * ``AGENT_RESERVED_TOOL_NAMES`` in
+#     ``/usr/lib/node_modules/openclaw/dist/builtin-openclaw-*.mjs``
+#     (always present in the embedded runtime): bash, edit, find, grep, ls,
+#     read, write.
+#   * the core built-in tool groups documented in
+#     ``docs/gateway/config-tools/tool-policy.md`` of the OpenClaw package
+#     (``group:runtime``, ``group:fs``, ``group:sessions``, ``group:memory``,
+#     ``group:web``, ``group:ui``, ``group:automation``, ``group:messaging``,
+#     ``group:nodes``, ``group:agents``, ``group:media``) plus the ``cron``
+#     alias for ``automations``.
+# Names that could not be confirmed as reserved are not included; see
+# ``WORK_REPORT.md`` for the provenance and the residual uncertainty.
+RESERVED_TOOL_NAMES = frozenset(
+    {
+        # AGENT_RESERVED_TOOL_NAMES (embedded runtime, always present)
+        "bash",
+        "edit",
+        "find",
+        "grep",
+        "ls",
+        "read",
+        "write",
+        # group:runtime
+        "exec",
+        "process",
+        "code_execution",
+        # group:fs
+        "apply_patch",
+        # group:sessions
+        "sessions",
+        "sessions_list",
+        "sessions_history",
+        "sessions_search",
+        "conversations_list",
+        "conversations_send",
+        "conversations_turn",
+        "sessions_send",
+        "sessions_spawn",
+        "sessions_yield",
+        "subagents",
+        "session_status",
+        "suggest_task",
+        "dismiss_task",
+        # group:memory
+        "memory_search",
+        "memory_get",
+        # group:web
+        "web_search",
+        "x_search",
+        "web_fetch",
+        # group:ui
+        "browser",
+        "screen",
+        "dashboard",
+        "terminal",
+        "portal",
+        "canvas",
+        "show_widget",
+        # group:automation
+        "heartbeat_respond",
+        "automations",
+        "cron",
+        "gateway",
+        "plugins",
+        "openclaw",
+        # group:messaging
+        "message",
+        # group:nodes
+        "nodes",
+        "computer",
+        # group:agents
+        "agents_list",
+        "get_goal",
+        "create_goal",
+        "update_goal",
+        "progress_card",
+        "ask_user",
+        "skill_workshop",
+        # group:media
+        "view_image",
+        "image_generate",
+        "music_generate",
+        "video_generate",
+        "tts",
+        "pdf",
+    }
+)
+
 CONF_CONTEXT_THRESHOLD = "context_threshold"
 DEFAULT_CONTEXT_THRESHOLD = 40000
 CONTEXT_TRUNCATE_STRATEGIES = [{"key": "clear", "label": "Clear All Messages"}]

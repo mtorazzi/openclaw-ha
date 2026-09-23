@@ -6,6 +6,18 @@ description: "Execute shell commands with security controls"
 Bash functions execute shell commands with built-in security controls, allowing AI assistants to interact with the operating system, run scripts, and perform system operations.
 
 <Warning>
+**Not enabled by default in the OpenClaw integration**
+
+The OpenClaw gateway reserves the `bash` tool name (`bash` is an alias for its
+built-in `exec` tool) and rejects any client-declared function whose name
+collides with its namespace with HTTP 400 `invalid tool configuration`. The
+OpenClaw integration does not ship a `bash` function in its default tools, and
+its tool guard filters reserved names before the request is sent. The
+shell-execution surface documented on this page is therefore **not** available
+to conversations that talk to the OpenClaw gateway.
+</Warning>
+
+<Warning>
 **Security Considerations**
 
 Bash functions execute arbitrary shell commands. They include multiple layers of security:

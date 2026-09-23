@@ -44,6 +44,7 @@ from .const import (
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
     DOMAIN,
+    RESERVED_TOOL_NAMES,
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
 from .functions import get_function
@@ -166,6 +167,35 @@ def _convert_content_to_param(
     return messages
 
 
+def _client_tools(
+    function_tools: list[dict[str, Any]],
+) -> list[ChatCompletionToolParam]:
+    """Build the request ``tools`` list, dropping reserved OpenClaw names.
+
+    Never declare a client tool whose name collides with a reserved OpenClaw
+    built-in tool name: the gateway rejects the whole request with HTTP 400
+    ("invalid tool configuration"). Filter defensively so a stale or
+    hand-written config can never break the conversation. Log the name only,
+    never the spec payload.
+    """
+    tools: list[ChatCompletionToolParam] = []
+    for func_spec in function_tools:
+        tool_name = func_spec.get("spec", {}).get("name", "")
+        if tool_name in RESERVED_TOOL_NAMES:
+            _LOGGER.warning(
+                "Ignoring client tool %r: name is reserved by the OpenClaw gateway",
+                tool_name,
+            )
+            continue
+        tools.append(
+            ChatCompletionToolParam(
+                type="function",
+                function=func_spec["spec"],
+            )
+        )
+    return tools
+
+
 class OpenClawBaseLLMEntity(Entity):
     """OpenClaw base entity."""
 
@@ -229,14 +259,8 @@ class OpenClawBaseLLMEntity(Entity):
         conversation_id = chat_log.conversation_id or self.entity_id
         session_user = f"ha:{conversation_id}"
 
-        # Build functions list from custom functions
-        tools: list[ChatCompletionToolParam] = [
-            ChatCompletionToolParam(
-                type="function",
-                function=func_spec["spec"],
-            )
-            for func_spec in function_tools
-        ]
+        # Build functions list from custom functions, filtering reserved names.
+        tools: list[ChatCompletionToolParam] = _client_tools(function_tools)
 
         # Build API parameters based on model configuration
         api_kwargs: dict[str, Any] = {
