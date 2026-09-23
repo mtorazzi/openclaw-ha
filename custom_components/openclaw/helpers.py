@@ -116,8 +116,9 @@ def get_openclaw_client(
 
     The gateway implements ``POST /v1/chat/completions`` and ``GET /v1/models``.
     Authentication uses the gateway bearer token; the selected agent is passed
-    both via the ``x-openclaw-agent-id`` header and, when no explicit model is
-    chosen, via the ``openclaw:<agent_id>`` model alias.
+    via the ``x-openclaw-agent-id`` header, and the default agent is selected
+    through the delegating ``openclaw/default`` model alias so the gateway's
+    configured ``primary`` + ``fallbacks`` chain still applies.
     """
     host = data.get(CONF_GATEWAY_HOST, DEFAULT_GATEWAY_HOST)
     port = int(data.get(CONF_GATEWAY_PORT, DEFAULT_GATEWAY_PORT))

@@ -216,6 +216,19 @@ class OpenClawBaseLLMEntity(Entity):
 
         messages = _convert_content_to_param(chat_log.content, shorten_tool_call_id)
 
+        # Defect 3: the OpenClaw gateway is stateless per request unless the
+        # request carries an OpenAI ``user`` string, in which case it derives a
+        # stable session key from it and reuses that agent session. Deriving the
+        # value from the Home Assistant conversation id keeps exactly one
+        # gateway session per HA conversation (instead of one orphan session per
+        # request) and enables context-cache reuse. The ``ha:`` prefix namespaces
+        # the key so it cannot collide with other gateway clients. The value is
+        # deterministic for the lifetime of the conversation; if HA ever reports
+        # an empty conversation id we fall back to the entity id, which is also
+        # deterministic (never a random value, which would recreate the defect).
+        conversation_id = chat_log.conversation_id or self.entity_id
+        session_user = f"ha:{conversation_id}"
+
         # Build functions list from custom functions
         tools: list[ChatCompletionToolParam] = [
             ChatCompletionToolParam(
@@ -230,6 +243,7 @@ class OpenClawBaseLLMEntity(Entity):
             "model": model,
             "stream": True,
             "stream_options": {"include_usage": True},
+            "user": session_user,
         }
 
         # Add token limit parameter based on model support
@@ -302,7 +316,15 @@ class OpenClawBaseLLMEntity(Entity):
             if tools and 0 <= max_function_calls <= n_requests:
                 tool_kwargs["tool_choice"] = "none"
 
-            _LOGGER.info("Prompt for %s: %s", model, json.dumps(messages))
+            # Privacy: never log prompt/message content at INFO. Log only the
+            # model and coarse sizes; full content stays at DEBUG.
+            _LOGGER.info(
+                "Sending prompt to %s: %d messages, %d chars",
+                model,
+                len(messages),
+                len(json.dumps(messages)),
+            )
+            _LOGGER.debug("Prompt for %s: %s", model, json.dumps(messages))
 
             stream = await self._client.chat.completions.create(
                 messages=messages,
@@ -323,7 +345,8 @@ class OpenClawBaseLLMEntity(Entity):
                     pending_tool_calls.extend(content.tool_calls)
 
             if pending_tool_calls:
-                _LOGGER.info("Response Tool Calls %s", pending_tool_calls)
+                _LOGGER.info("Response Tool Calls: %d", len(pending_tool_calls))
+                _LOGGER.debug("Response Tool Calls %s", pending_tool_calls)
 
             # Execute custom functions
             for tool_input in pending_tool_calls:
@@ -398,9 +421,9 @@ class OpenClawBaseLLMEntity(Entity):
                 # Ensure content is a string (some APIs return unexpected types)
                 content_value = delta.content
                 if not isinstance(content_value, str):
+                    # Privacy: do not log the content itself.
                     _LOGGER.warning(
-                        "Received non-string content from API: %s (type: %s)",
-                        content_value,
+                        "Received non-string content from API (type: %s), coercing",
                         type(content_value),
                     )
                     content_value = str(content_value) if content_value else ""

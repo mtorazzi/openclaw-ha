@@ -1,6 +1,7 @@
 """Services for the OpenClaw integration."""
 
 import base64
+import json
 import logging
 import mimetypes
 from pathlib import Path
@@ -21,6 +22,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    DEFAULT_AGENT_ID,
     DOMAIN,
     GITHUB_REPO_NAME,
     GITHUB_REPO_OWNER,
@@ -29,6 +31,7 @@ from .const import (
     SERVICE_DOWNLOAD_SKILL,
     SERVICE_QUERY_IMAGE,
     SERVICE_RELOAD_SKILLS,
+    model_for_agent,
 )
 
 QUERY_IMAGE_SCHEMA = vol.Schema(
@@ -38,7 +41,7 @@ QUERY_IMAGE_SCHEMA = vol.Schema(
                 "integration": DOMAIN,
             }
         ),
-        vol.Required("model", default="openclaw:main"): cv.string,
+        vol.Required("model", default=model_for_agent(DEFAULT_AGENT_ID)): cv.string,
         vol.Required("prompt"): cv.string,
         vol.Required("images"): vol.All(cv.ensure_list, [{"url": cv.string}]),
         vol.Optional("max_tokens", default=300): cv.positive_int,
@@ -74,7 +77,14 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                     "content": [{"type": "text", "text": call.data["prompt"]}, *images],
                 }
             ]
-            _LOGGER.info("Prompt for %s: %s", model, messages)
+            # Privacy: log only coarse sizes at INFO; content stays at DEBUG.
+            _LOGGER.info(
+                "Querying image model %s: %d messages, %d chars",
+                model,
+                len(messages),
+                len(json.dumps(messages)),
+            )
+            _LOGGER.debug("Prompt for %s: %s", model, messages)
 
             entry = hass.config_entries.async_get_entry(call.data["config_entry"])
             if entry is None:
@@ -88,7 +98,7 @@ async def async_setup_services(hass: HomeAssistant, config: ConfigType) -> None:
                 max_tokens=call.data["max_tokens"],
             )
             response_dict: dict = response.model_dump()
-            _LOGGER.info("Response %s", response_dict)
+            _LOGGER.debug("Response %s", response_dict)
         except OpenAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 

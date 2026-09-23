@@ -30,8 +30,11 @@ route with HTTP 400, and the integration has no use for it.
 ### Model aliases
 
 The gateway accepts the alias form `openclaw:<agentId>` and `openclaw/default`.
-The integration uses `openclaw:<agent_id>` (default `openclaw:main`) and also
-sends the `x-openclaw-agent-id` header.
+For the configured default agent the integration sends `openclaw/default`, which
+delegates model selection to the gateway so the agent's configured `primary` and
+`fallbacks` chain still applies; `openclaw:<agentId>` (an explicit selection that
+bypasses the chain) is used only when a specific non-default agent is targeted.
+The `x-openclaw-agent-id` header is also sent.
 
 ### Structured output
 

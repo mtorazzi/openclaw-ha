@@ -751,3 +751,241 @@ Nothing else was touched; `domain` remains `openclaw`, the integration name is
 unchanged, no tags were created, and no branch other than
 `openclaw-integration` was touched.
 
+---
+
+# Continuation — four gateway/session/privacy defects
+
+Base for this continuation: `openclaw-integration` @
+`b0092b9aa716d03419c76bccd5cc4494a8c9ffc4`.
+
+Architecture respected: chat is performed by the `AsyncOpenAI` SDK client from
+`helpers.get_openclaw_client()` via `entity.py:_async_handle_chat_log` →
+`self._client.chat.completions.create(...)`. `api.py` (aiohttp) is **not** on the
+chat path and was not touched. The gateway is stateless per request unless the
+request carries an OpenAI `user` string.
+
+## 19. D1 — default agent must delegate (`openclaw/default`), not pin a model
+
+`const.model_for_agent()` previously always returned `openclaw:<agentId>`, which
+is an **explicit** model selection that bypasses the gateway's configured
+`primary` + `fallbacks` chain. Now:
+
+| call | result |
+| --- | --- |
+| `model_for_agent(None)` | `openclaw/default` |
+| `model_for_agent("main")` (== `DEFAULT_AGENT_ID`) | `openclaw/default` |
+| `model_for_agent("")` | `openclaw/default` |
+| `model_for_agent("other")` | `openclaw:other` |
+
+`DEFAULT_CHAT_MODEL = model_for_agent(DEFAULT_AGENT_ID)` therefore becomes
+`openclaw/default`, and every call site stays consistent automatically because
+they all route through the helper / constant:
+
+- `const.py:112` (`DEFAULT_CHAT_MODEL`) and `const.py:287`
+  (`DEFAULT_AI_TASK_OPTIONS`).
+- `config_flow.py:159-160` (`model = model_for_agent(agent_id)`); the
+  subentry defaults `config_flow.py:109/373/497` use `DEFAULT_CHAT_MODEL`.
+- `__init__.py:334-335` (`model_for_agent(call_agent_id)` for an explicit
+  caller, else `_resolve_model(entry)` which returns the subentry's
+  `CONF_CHAT_MODEL`, i.e. `openclaw/default`).
+
+**Parameter-set check (required).** `helpers.get_model_config(model)` ignores its
+`model` argument entirely and returns `DEFAULT_MODEL_CONFIG` for every alias
+(`helpers.py:36-42`); there is no code anywhere that branches on the `openclaw:`
+prefix. So switching the default to `openclaw/default` loses **no** parameter set.
+The comment at `const.py:285` ("generic OpenAI-compatible parameter set is used
+for all ``openclaw:*`` aliases") remains true.
+
+Docstrings that described the old default were corrected (`DOCS.md` §"Model
+aliases", `helpers.get_openclaw_client`). The `openclaw:main` strings still left
+in `strings.json` / `translations/en.json` / `services.yaml` are **examples** of
+the explicit form, not defaults, so they were intentionally left.
+
+## 20. D2 — remove the literal `"main"` from the service schema
+
+`services.py` `QUERY_IMAGE_SCHEMA`:
+
+```python
+vol.Required("model", default=model_for_agent(DEFAULT_AGENT_ID)): cv.string,
+```
+
+(`DEFAULT_AGENT_ID` + `model_for_agent` imported from `.const`.) Because of D1
+this default is the delegating `openclaw/default`, not `openclaw:main`.
+Runtime-verified with a minimal real `voluptuous` shim over the stub import
+harness: `query_image model default = 'openclaw/default'`.
+
+## 21. D3 — one gateway session per Home Assistant conversation
+
+`entity._async_handle_chat_log` now derives a stable, namespaced OpenAI `user`
+value from the chat log and sends it on every `chat.completions.create` call
+(including each tool-call iteration, since `api_kwargs` is built once):
+
+```python
+conversation_id = chat_log.conversation_id or self.entity_id
+session_user = f"ha:{conversation_id}"
+...
+api_kwargs = { "model": model, "stream": True,
+               "stream_options": {"include_usage": True},
+               "user": session_user }
+```
+
+`chat_log.conversation_id` is already reachable at the call site (the method
+receives `chat_log`), and is the same value already used at
+`conversation.py:200` and `ai_task.py:110`, so **both** the conversation agent
+and the AI Task map to the same scheme: `user = "ha:" + conversation_id`, i.e.
+one gateway session per HA conversation. The `ha:` prefix namespaces the value.
+If `conversation_id` is ever empty/absent the fallback is `self.entity_id`
+(deterministic per entity) — never a random value, which would recreate the
+defect. This mirrors the donor's `payload["user"] = session_id`
+(`oc-donor .../api.py:232`), namespaced and made deterministic.
+
+### 21.1 Live gateway proof
+
+Gateway `http://192.168.20.141:18789/v1`; token read from
+`/root/.openclaw/openclaw.json` → `gateway.auth.token` (never printed). Baseline
+`openclaw sessions list --agent main --active 30 --json` showed **1** active
+session (`agent:main:main`). Then the same payload was sent twice with a stable
+`user`, and twice without:
+
+```bash
+TOKEN=$(python3 -c "import json;print(json.load(open('/root/.openclaw/openclaw.json'))['gateway']['auth']['token'])")
+URL=http://192.168.20.141:18789/v1/chat/completions
+# WITH user (twice):
+curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "x-openclaw-agent-id: main" \
+  -d '{"model":"openclaw/default","messages":[{"role":"user","content":"Reply with exactly the word: PONG"}],"stream":false,"user":"ha:defect3-proof-20260923"}' \
+  "$URL"
+# WITHOUT user (twice):
+curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -H "x-openclaw-agent-id: main" \
+  -d '{"model":"openclaw/default","messages":[{"role":"user","content":"Reply with exactly the word: PONG"}],"stream":false}' \
+  "$URL"
+```
+
+All four returned `HTTP 200`, `content="PONG"`, `model="openclaw/default"`.
+Session-store diffs (real `openclaw sessions list --json`):
+
+| phase | requests | new sessions created |
+| --- | --- | --- |
+| baseline | — | 1 (`agent:main:main`, pre-existing) |
+| 2× **with** `user=ha:defect3-proof-20260923` | 2 | **1** → `agent:main:openai-user:ha:defect3-proof-20260923` |
+| 2× **without** `user` | 2 | **2** → `agent:main:openai:44a19786-…`, `agent:main:openai:8e29b208-…` |
+
+So with a stable `user` the second request **reuses** the session derived from
+it; without `user` the gateway opens one orphan
+`agent:main:openai:<random-uuid>` session **per request** — exactly the reported
+defect, now fixed. The session store also showed the resolved model as
+`deepseek-v4.1-flash`, the configured `primary`, confirming `openclaw/default`
+delegates to the agent's configured chain.
+
+Raw session keys observed after each phase:
+
+```
+baseline : agent:main:main
+after+user: agent:main:main
+            agent:main:openai-user:ha:defect3-proof-20260923
+after no-user: agent:main:main
+               agent:main:openai-user:ha:defect3-proof-20260923
+               agent:main:openai:44a19786-8bb3-4ce6-8bcc-b4c984f7dbbd
+               agent:main:openai:8e29b208-b184-46ea-b60d-3e3e866924c6
+```
+
+The three test sessions created by this proof were left in place (no
+`session delete` was run) to avoid destructive operations; they are clearly
+named (`openai-user:ha:defect3-proof-20260923`, and two random-uuid
+`openai:` sessions).
+
+## 22. D4 — prompt/message content no longer logged at INFO
+
+Primary fix (`entity.py`, was `_LOGGER.info("Prompt for %s: %s", model,
+json.dumps(messages))`): the full prompt is now `_LOGGER.debug`; INFO logs only
+coarse signal:
+
+```python
+_LOGGER.info("Sending prompt to %s: %d messages, %d chars", model,
+             len(messages), len(json.dumps(messages)))
+_LOGGER.debug("Prompt for %s: %s", model, json.dumps(messages))
+```
+
+Audit of `_LOGGER.info|warning|error` across `custom_components/openclaw/`
+(the requested grep) found the same class of leak in three more places, all
+fixed to keep INFO signal while removing content:
+
+1. `services.py:77` — `query_image` logged the full prompt messages at INFO →
+   INFO now logs message/char counts, content at DEBUG.
+2. `services.py:91` — `query_image` logged the entire completion
+   (`response.model_dump()`, i.e. assistant content) at INFO → DEBUG.
+3. `entity.py:326` — logged all `pending_tool_calls` (model-produced arguments)
+   at INFO → INFO now logs only the count, content at DEBUG.
+4. `entity.py:401` — a WARNING logged the raw non-string response content →
+   now logs only the type (no content).
+5. `functions/sqlite.py:95` — logged the fully rendered SQL query (which can
+   embed conversation-derived values) at INFO → DEBUG.
+
+The remaining INFO/WARNING/ERROR sites log identifiers, paths, counts, HTTP
+status or exception objects only — no prompt/message/token content.
+
+## 23. Verification (this continuation)
+
+1. **AST cross-module import audit** (`/tmp/opencode/import_audit.py`; the
+   parser handles `ast.TypeAlias`/PEP 695 for the `type OpenClawConfigEntry`
+   alias, so the three `TYPE_CHECKING` importers do not false-positive):
+
+   ```
+   checked 240 relative-import names; failures=0
+   ```
+
+   (240 = the previous 238 plus the two new `services.py` names
+   `DEFAULT_AGENT_ID` and `model_for_agent`.)
+
+2. **Real import of every module** with the stubbed `homeassistant`/`openai`/
+   `probatio`/… tree (`/tmp/opencode/import_harness.py`): **23/23 modules
+   imported, `PASS — failures: []`**; the three platform modules are still
+   preimported by the package (`Step A: YES/YES/YES`).
+
+3. `find custom_components/openclaw -name "*.py" -print0 | xargs -0 python3 -m
+   py_compile` → clean (exit 0).
+
+4. `grep -rn "extended_openai_conversation" custom_components/openclaw hacs.json`
+   → **empty** (exit 1).
+
+5. Live gateway proof for D3 → §21.1 (real evidence: session-store diffs).
+
+6. `manifest.json` → `domain = "openclaw"` (exact), `name = "OpenClaw OpenAI
+   Integration"`, `version = 1.0.0`.
+
+7. `ruff 0.16.8` (the CI version): still **11** pre-existing `check` errors
+   (all in `__init__.py`/`api.py`/`conversation.py`/`coordinator.py`, none in the
+   files changed here) and `ruff format --check` reports the five changed files
+   already formatted. No new lint/format regression.
+
+### 23.1 Honestly unverified
+
+- No Home Assistant runtime here: the full conversation/AI-Task execution path,
+  the config flow and the service registration are **static/import-level only**.
+  The `user` value is proven correct against the real gateway (§21.1), and the
+  SDK call accepts `user`, but the HA→SDK→gateway path was not run inside HA.
+- D1 delegation is evidenced by the gateway accepting `openclaw/default` and
+  resolving to the configured `primary` (`deepseek-v4.1-flash`). A real
+  fallback (primary unavailable → fallback) was **not** forced; only the
+  delegating form and primary resolution were observed.
+- The `openclaw:main` example strings in `strings.json`,
+  `translations/en.json` and `services.yaml` were deliberately left (they are
+  examples, not defaults).
+
+## 24. Files changed in this continuation
+
+- `custom_components/openclaw/const.py` — `model_for_agent` delegating default.
+- `custom_components/openclaw/services.py` — schema default via constant;
+  `query_image` prompt/response logging; `json` import.
+- `custom_components/openclaw/entity.py` — stable `user`; prompt/tool-call/
+  non-string logging.
+- `custom_components/openclaw/helpers.py` — docstring only.
+- `custom_components/openclaw/functions/sqlite.py` — rendered-query log level.
+- `DOCS.md` — model-alias description.
+- `WORK_REPORT.md` — this section.
+
+`domain` remains exactly `openclaw`; the display name is unchanged; no tags were
+created and no branch other than `openclaw-integration` was touched.
+
+

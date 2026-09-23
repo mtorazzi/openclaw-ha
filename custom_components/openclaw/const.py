@@ -36,9 +36,18 @@ def model_for_agent(agent_id: str | None) -> str:
     """Return the OpenClaw model alias for an agent ID.
 
     The gateway accepts the alias form ``openclaw:<agentId>`` as well as
-    ``openclaw/default``.
+    ``openclaw/default``. ``openclaw/default`` *delegates* agent selection to
+    the gateway, so the agent's configured ``primary`` model and its
+    ``fallbacks`` chain still apply. ``openclaw:<agentId>`` is an **explicit**
+    selection: it bypasses that chain and pins the request to one model.
+
+    The configured default agent therefore emits the delegating
+    ``openclaw/default`` form; the explicit form is reserved for a caller that
+    deliberately targets a specific non-default agent.
     """
-    return f"openclaw:{agent_id or DEFAULT_AGENT_ID}"
+    if not agent_id or agent_id == DEFAULT_AGENT_ID:
+        return "openclaw/default"
+    return f"openclaw:{agent_id}"
 
 
 # ---------------------------------------------------------------------------
