@@ -1,6 +1,6 @@
 {
   "domain": "openclaw",
-  "name": "OpenClaw",
+  "name": "OpenClaw OpenAI Integration",
   "codeowners": [
     "@mtorazzi"
   ],
@@ -9,7 +9,7 @@
     "ai_task",
     "conversation",
     "energy",
-    "history",
+    "http",
     "recorder",
     "rest",
     "scrape"

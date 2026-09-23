@@ -1,4 +1,4 @@
-# OpenClaw for Home Assistant
+# OpenClaw OpenAI Integration
 
 A Home Assistant custom integration that connects Home Assistant to an
 **OpenClaw gateway** and exposes it as:
@@ -8,18 +8,35 @@ A Home Assistant custom integration that connects Home Assistant to an
 2. a **conversation agent** for Assist / chat, using Home Assistant's LLM
    Assist API with native function calling.
 
-This is a hard fork of
-[`jekalmin/extended_openai_conversation`](https://github.com/jekalmin/extended_openai_conversation),
-specialised for the OpenClaw gateway. The conversation/AI Task architecture is
-kept intact; the OpenAI/Azure provider plumbing is replaced with an OpenClaw
-gateway connection.
+It also ships gateway services, events, status/telemetry sensors and a
+bundled Lovelace chat card.
+
+> **This is a hard fork, not an official upstream release.** It is maintained by
+> [@mtorazzi](https://github.com/mtorazzi) and published from
+> [mtorazzi/openclaw-ha](https://github.com/mtorazzi/openclaw-ha). It is not
+> affiliated with, endorsed by, or released by the upstream project.
+
+## Credits and attribution
+
+- **Upstream project** — the conversation/AI Task architecture is forked from
+  [`jekalmin/extended_openai_conversation`](https://github.com/jekalmin/extended_openai_conversation).
+  The OpenAI/Azure provider plumbing has been replaced with an OpenClaw gateway
+  connection; the LLM Assist API function-calling design is preserved.
+- **Donor project** — the OpenClaw gateway wiring (connection/auth approach,
+  `api.py` HTTP client, `send_message` / `clear_history` / `invoke_tool`
+  services, events, coordinator/sensors) and the Lovelace chat card were ported
+  and adapted from
+  [`techartdev/OpenClawHomeAssistantIntegration`](https://github.com/techartdev/OpenClawHomeAssistantIntegration).
+- **Maintainer** — [https://github.com/mtorazzi](https://github.com/mtorazzi)
 
 ## Requirements
 
-- Home Assistant **2026.8.0** or newer (the AI Task entity relies on the
-  `probatio` schema layer introduced in HA core).
+- Home Assistant **2026.9.0** or newer. The AI Task entity uses the `probatio`
+  schema layer that Home Assistant introduced in the `helpers.llm` module in
+  2026.9.0 (`probatio` is absent from `homeassistant/helpers/llm.py` in
+  2026.8.0), and the code imports `probatio` directly.
 - An OpenClaw gateway reachable over the network with the OpenAI-compatible
-  API enabled:
+  **`/v1/chat/completions`** endpoint enabled:
 
   ```json
   {
@@ -33,10 +50,24 @@ gateway connection.
   }
   ```
 
-  The integration uses **only** `POST /v1/chat/completions` and
-  `GET /v1/models`. It never calls `POST /v1/responses` (that endpoint rejects
-  `include`, `prompt_cache_key`, `service_tier` and `safety_identifier` with
-  HTTP 400).
+### Gateway API contract
+
+The integration uses exactly these gateway endpoints:
+
+| Endpoint | Method | Used for |
+| --- | --- | --- |
+| `/v1/chat/completions` | `POST` | Chat / conversation / AI Task / `query_image` (via the OpenAI Python client) |
+| `/v1/models` | `GET` | Connection validation at setup and the status/model sensors |
+| `/tools/invoke` | `POST` | The `openclaw.invoke_tool` service |
+
+It **never** calls `POST /v1/responses`. That endpoint rejects `include`,
+`prompt_cache_key`, `service_tier` and `safety_identifier` with HTTP 400, so the
+integration does not send them and does not use the Responses API.
+
+> **Caveat:** the gateway forwards `response_format` to the backing agent but
+> does **not** enforce JSON schemas. The AI Task therefore prepends an explicit
+> "respond with JSON only" instruction containing the schema and strips markdown
+> code fences before parsing.
 
 ## Installation
 
@@ -44,7 +75,7 @@ gateway connection.
 
 1. In HACS, open **⋮ → Custom repositories**.
 2. Add `https://github.com/mtorazzi/openclaw-ha` as an **Integration**.
-3. Install **OpenClaw** and restart Home Assistant.
+3. Install **OpenClaw OpenAI Integration** and restart Home Assistant.
 
 ### Manual
 
@@ -53,7 +84,8 @@ and restart Home Assistant.
 
 ## Setup
 
-1. Go to **Settings → Devices & Services → Add Integration → OpenClaw**.
+1. Go to **Settings → Devices & Services → Add Integration → OpenClaw OpenAI
+   Integration**.
 2. Fill in the gateway connection details:
 
    | Field | Default | Notes |
@@ -63,15 +95,16 @@ and restart Home Assistant.
    | Token | — | `gateway.auth.token` from `openclaw.json` (stored as a secret) |
    | Use SSL | `false` | Connect over HTTPS |
    | Verify SSL certificate | `true` | Disable for self-signed certificates |
-   | Agent ID | `main` | Routed as the `openclaw:<agent_id>` model alias |
+   | Agent ID | `main` | Used to build the `openclaw:AGENT_ID` model alias |
 
-3. The flow validates the connection with `GET /v1/models`.
+   The base URL is derived as `http(s)://<host>:<port>/v1`, and the flow
+   validates the connection with `GET /v1/models`.
 
-The integration creates two subentries by default — a **conversation agent** and
-an **AI Task agent** — both using the model alias `openclaw:<agent_id>`. You can
-add more of either from the integration's page, and edit the advanced options
-(model, temperature, prompt, functions, skills, …) there. Advanced options are
-not required at setup time.
+3. The integration creates two subentries by default — a **conversation agent**
+   and an **AI Task agent** — both using the model alias `openclaw:<agent_id>`.
+   You can add more of either from the integration's page, and edit the advanced
+   options (model, temperature, prompt, functions, skills, …) there. Advanced
+   options are not required at setup time.
 
 ## Usage
 
@@ -91,10 +124,10 @@ data:
     categories: [food, transport, other]
 ```
 
-> **Note:** the OpenClaw gateway forwards `response_format` to the backing agent
-> but does **not** enforce it. The integration therefore adds an explicit
-> "respond with JSON only" instruction to the prompt and strips markdown code
-> fences before parsing. Keep instructions precise.
+> **Note:** because the gateway does not enforce `response_format`, keep the
+> task instructions precise and ask for JSON-only output. The integration adds
+> that instruction and strips code fences, but it cannot force the backing agent
+> to follow a schema.
 
 ### Conversation agent
 
@@ -116,6 +149,7 @@ API (`intent`, exposed entities, custom functions).
 
 - `openclaw_message_received` — fired after `openclaw.send_message` completes and
   after a conversation agent reply.
+- `openclaw.conversation.finished` — fired when a conversation turn finishes.
 - `openclaw_tool_invoked` — fired after `openclaw.invoke_tool`, with `tool`,
   `ok`, `duration_ms`, `result`/`error`.
 
@@ -152,7 +186,7 @@ title: OpenClaw
 
 The card talks to the gateway through the `openclaw.send_message` service,
 subscribes to `openclaw_message_received`, and loads history through the
-`openclaw/get_history` websocket command.
+`openclaw/get_history` websocket command (settings via `openclaw/get_settings`).
 
 ## Troubleshooting
 
@@ -165,13 +199,7 @@ subscribes to `openclaw_message_received`, and loads history through the
   task instructions explicit about JSON-only output.
 - **SSL errors** — disable **Verify SSL certificate** for self-signed certs.
 
-## Credits
-
-Architecture forked from
-[`jekalmin/extended_openai_conversation`](https://github.com/jekalmin/extended_openai_conversation).
-OpenClaw gateway wiring adapted from
-[`techartdev/OpenClawHomeAssistantIntegration`](https://github.com/techartdev/OpenClawHomeAssistantIntegration).
-
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE). This fork keeps the upstream and donor copyright
+notices; see [Credits and attribution](#credits-and-attribution).

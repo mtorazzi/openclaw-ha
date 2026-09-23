@@ -1,4 +1,4 @@
-# OpenClaw integration — documentation
+# OpenClaw OpenAI Integration — documentation
 
 ## Overview
 

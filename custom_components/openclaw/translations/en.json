@@ -26,7 +26,7 @@
                     "gateway_token": "Gateway bearer token (gateway.auth.token in openclaw.json). Stored as a secret.",
                     "use_ssl": "Connect over HTTPS instead of HTTP.",
                     "verify_ssl": "Verify the TLS certificate. Disable for self-signed certificates.",
-                    "agent_id": "OpenClaw agent to route requests to. Used as the openclaw:<agent_id> model alias."
+                    "agent_id": "OpenClaw agent to route requests to. Used to build the openclaw:AGENT_ID model alias."
                 }
             }
         }
