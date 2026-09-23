@@ -1,6 +1,9 @@
 {
   "domain": "openclaw",
   "name": "OpenClaw OpenAI Integration",
+  "after_dependencies": [
+    "lovelace"
+  ],
   "codeowners": [
     "@mtorazzi"
   ],
@@ -13,9 +16,6 @@
     "recorder",
     "rest",
     "scrape"
-  ],
-  "after_dependencies": [
-    "lovelace"
   ],
   "documentation": "https://github.com/mtorazzi/openclaw-ha",
   "integration_type": "service",

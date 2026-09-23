@@ -393,6 +393,13 @@ Fixes:
    keys each). The size difference is only the `[%key:common::…%]` references in
    `strings.json` resolved to literal English in `translations/en.json`, which
    is the expected HA layout. No structural change was needed.
+5. **Manifest key ordering** — surfaced only after the errors above were fixed
+   (hassfest runs the sort check only when the integration has no other
+   errors). Reordered the top-level keys to the required *domain, name, then
+   alphabetical* order: `domain`, `name`, `after_dependencies`, `codeowners`,
+   `config_flow`, `dependencies`, `documentation`, `integration_type`,
+   `iot_class`, `issue_tracker`, `requirements`, `version`. (The old file had
+   `after_dependencies` after `dependencies`, which is not alphabetical.)
 
 > Note: hassfest (current `dev`) has **no** brand-image validator and does not
 > reject oversized brand images; the brand folder is required by **HACS**
@@ -452,6 +459,17 @@ The maintainer must set these in GitHub repo settings; they are the reason
 (HACS `description` check already passes because a description exists; the
 above is about making it accurate. HACS `topics` and `issues` checks will keep
 failing until these settings are changed.)
+
+**HACS `license` check and the default branch.** The `LICENSE` file is present
+on `openclaw-integration` (verified via the contents API: `LICENSE`, 1229 B),
+but HACS validates the **repository-level** license object returned by the
+GitHub API (`repo.repository_object.attributes["license"]`), which is computed
+from the **default branch**. This fork's default branch is `develop`, which does
+not contain a `LICENSE` file, so the API returns `license: null` and the check
+fails even though the file exists on the feature branch. It will pass
+automatically once this branch is merged into `develop`. No file change can fix
+it from a non-default branch; do **not** add an `ignore:` entry to the workflow
+to mask it.
 
 ## 12. Verification performed (this continuation)
 
@@ -513,4 +531,6 @@ Steps (after review/merge to the default branch):
 - hassfest cannot be run locally (no Docker); the fixes above are derived from
   the exact run-log errors and the hassfest source (`script/hassfest/*`), and
   must be confirmed by CI.
-- HACS `topics`/`issues` cannot be satisfied from files (see §11).
+- HACS `topics`/`issues` cannot be satisfied from files (see §11), and the HACS
+  `license` check reads the default branch (`develop`), so it clears only after
+  this branch is merged.
