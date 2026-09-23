@@ -47,6 +47,7 @@ def model_for_agent(agent_id: str | None) -> str:
 EVENT_CONVERSATION_FINISHED = "openclaw.conversation.finished"
 EVENT_MESSAGE_RECEIVED = f"{DOMAIN}_message_received"
 EVENT_TOOL_INVOKED = f"{DOMAIN}_tool_invoked"
+EVENT_AUTOMATION_REGISTERED = f"{DOMAIN}_automation_registered"
 
 # ---------------------------------------------------------------------------
 # Conversation / AI Task options

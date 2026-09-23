@@ -534,3 +534,220 @@ Steps (after review/merge to the default branch):
 - HACS `topics`/`issues` cannot be satisfied from files (see §11), and the HACS
   `license` check reads the default branch (`develop`), so it clears only after
   this branch is merged.
+
+---
+
+# Continuation — fix ImportError + blocking platform import
+
+Base for this continuation: `openclaw-integration` @
+`1df64862a4e93a56f9de006e07b70cf0f9881e47`.
+
+Two load-time defects reported from a real Home Assistant install are fixed.
+The previous worker verified only `py_compile`, which cannot catch either
+defect; the verification below is deliberately stronger (§17).
+
+## 15. Defect 1 — `ImportError: EVENT_AUTOMATION_REGISTERED`
+
+During the domain rename, `const.py` lost
+`EVENT_AUTOMATION_REGISTERED` while `functions/native.py` still imported and
+used it (line 23 import, line ~167 `hass.bus.async_fire(...)`), so the whole
+integration failed to import.
+
+Restored in `const.py`, following the **new** domain naming convention of its
+neighbours:
+
+```python
+EVENT_CONVERSATION_FINISHED = "openclaw.conversation.finished"
+EVENT_MESSAGE_RECEIVED = f"{DOMAIN}_message_received"
+EVENT_TOOL_INVOKED = f"{DOMAIN}_tool_invoked"
+EVENT_AUTOMATION_REGISTERED = f"{DOMAIN}_automation_registered"   # added
+```
+
+**Chosen value: `EVENT_AUTOMATION_REGISTERED = f"{DOMAIN}_automation_registered"`,
+i.e. the runtime string `"openclaw_automation_registered"`.** The old upstream
+string `"automation_registered_via_extended_openai_conversation"` was **not**
+reintroduced. `grep -rn extended_openai_conversation custom_components/openclaw
+hacs.json` is empty (§17.4).
+
+## 16. Defect 2 — blocking `import_module` inside the event loop
+
+`async_forward_entry_setups(entry, PLATFORMS)` triggered a blocking import of
+`custom_components.openclaw.conversation` inside the event loop. Fixed the
+canonical HA way: the three platform modules are now imported at module top
+level in `__init__.py`, so they are already in `sys.modules` before
+`async_forward_entry_setups` runs:
+
+```python
+from . import ai_task as ai_task, conversation as conversation, sensor as sensor
+from .api import OpenClawApiClient, OpenClawApiError
+```
+
+The redundant `X as X` aliases are the HA-canonical way to mark an
+intentional side-effect import (and keep `ruff` F401 quiet).
+
+### 16.1 Supporting change required to make the fix valid
+
+The prescribed top-level import cannot be placed naively: `conversation.py`
+did `from . import OpenClawConfigEntry` **unguarded at runtime**, while
+`OpenClawConfigEntry` is defined later in `__init__.py`
+(`type OpenClawConfigEntry = ConfigEntry[AsyncClient]`, line ~85). Importing
+`conversation` before that line is reached raises a circular `ImportError`
+(verified with a minimal reproduction: `from . import sub` before
+`type X = int` fails, after it succeeds). `conversation.py` uses the name only
+in an annotation (`config_entry: OpenClawConfigEntry`, line 57) under
+`from __future__ import annotations`, so it is never evaluated at runtime.
+
+The name was therefore moved under a `TYPE_CHECKING` guard — exactly the
+pattern the two sibling platform modules already use (`entity.py:53`,
+`ai_task.py:22`):
+
+```python
+from typing import TYPE_CHECKING, Any, Literal
+...
+if TYPE_CHECKING:
+    from . import OpenClawConfigEntry
+```
+
+This is the "precise form HA expects for this pattern", not an alternative
+refactor: without it the mandated top-level import is impossible. No other
+code was restructured.
+
+## 17. Verification (this continuation)
+
+### 17.1 Cross-module import audit — static, clean
+
+A `grep` only lists the imports; it does not prove the names exist. An AST audit
+(`/tmp/opencode/import_audit.py`) resolves every relative `from .x import a, b`
+in the package to its target module and checks each imported name against the
+names actually defined there (assignments, defs, classes, PEP 695 `type`
+aliases, imports, `TYPE_CHECKING` blocks).
+
+Command:
+
+```bash
+python3 /tmp/opencode/import_audit.py
+```
+
+Output after the fix:
+
+```
+checked 238 relative-import names; failures=0
+```
+
+**Before** the `const.py` fix the same audit printed exactly the reported
+defect (and nothing else):
+
+```
+MISSING NAME    custom_components/openclaw/functions/native.py:23  from const.py import EVENT_AUTOMATION_REGISTERED
+checked 235 relative-import names; failures=1
+```
+
+The supporting `grep`:
+
+```bash
+grep -rn "from \.\.\?const import" custom_components/openclaw/ --include=*.py
+```
+
+lists all 16 `const` import sites, including
+`functions/native.py:23:from ..const import EVENT_AUTOMATION_REGISTERED`.
+
+### 17.2 Real import of every module — passes
+
+Home Assistant is **not installed** (and was not installed). A minimal stub
+tree was built with `sys.modules`/meta-path injection
+(`/tmp/opencode/import_harness.py`) that fakes only the missing external
+packages (`homeassistant.*`, `openai`, `voluptuous`, `orjson`, `probatio`,
+`bs4`, `aiohttp`) with real, subclassable classes, then imports the integration
+for real.
+
+Command:
+
+```bash
+python3 /tmp/opencode/import_harness.py
+```
+
+Output:
+
+```
+Step A: platform modules present in sys.modules right after importing the package:
+  custom_components.openclaw.ai_task: YES
+  custom_components.openclaw.conversation: YES
+  custom_components.openclaw.sensor: YES
+
+Step B: explicit import of every module:
+  OK    custom_components.openclaw.ai_task
+  OK    custom_components/openclaw.api
+  OK    custom_components/openclaw.config_flow
+  OK    custom_components/openclaw.const
+  OK    custom_components/openclaw.conversation
+  OK    custom_components/openclaw.coordinator
+  OK    custom_components.openclaw.entity
+  OK    custom_components.openclaw.exceptions
+  OK    custom_components.openclaw.functions
+  OK    custom_components.openclaw.functions.base
+  OK    custom_components.openclaw.functions.bash
+  OK    custom_components.openclaw.functions.composite
+  OK    custom_components.openclaw.functions.file
+  OK    custom_components.openclaw.functions.native
+  OK    custom_components.openclaw.functions.script
+  OK    custom_components/openclaw.functions.sqlite
+  OK    custom_components/openclaw.functions.template
+  OK    custom_components/openclaw.functions.web
+  OK    custom_components.openclaw.helpers
+  OK    custom_components.openclaw.sensor
+  OK    custom_components.openclaw.services
+  OK    custom_components/openclaw.skills
+  OK    custom_components.openclaw.template
+
+PASS — failures: []
+```
+
+Step A is the direct evidence for Defect 2: **before** the fix the three
+platforms reported `NO` (the package import did not pull them in, so
+`async_forward_entry_setups` imported them in the loop); **after** the fix all
+three report `YES`.
+
+Caveat, stated honestly: the stubs satisfy the *import graph* (names resolve,
+class bodies execute, module-level statements run), but they are not Home
+Assistant. Runtime behaviour (setup, config flow, entities, services) remains
+unverified here, as before (§14).
+
+### 17.3 `py_compile`
+
+```bash
+find custom_components/openclaw -name "*.py" -print0 | xargs -0 python3 -m py_compile
+```
+
+→ clean, exit 0. (Noted only as a floor: `py_compile` is what let both defects
+ship, so it is not treated as evidence on its own.)
+
+### 17.4 No legacy domain string
+
+```bash
+grep -rn "extended_openai_conversation" custom_components/openclaw hacs.json
+```
+
+→ empty, exit 1.
+
+### 17.5 Lint / format regression check
+
+`ruff 0.16.8` (the version CI installs) was run against the component. The
+branch already had 11 pre-existing `ruff check` errors and 4 files the formatter
+would change (`UP017`/`UP041`/`RUF100`/`I001`, py3.14 PEP 758 `except`
+formatting) **before** this change. After this change the count is still **11**;
+the only diff is line-number shifts. **No new `ruff check` error and no new
+`ruff format` diff was introduced** (the added import line and the
+`TYPE_CHECKING` block are format-clean and in the isort-canonical position).
+
+## 18. Files changed in this continuation
+
+- `custom_components/openclaw/const.py` — added `EVENT_AUTOMATION_REGISTERED`.
+- `custom_components/openclaw/__init__.py` — top-level platform imports.
+- `custom_components/openclaw/conversation.py` — `OpenClawConfigEntry` import
+  moved under `TYPE_CHECKING` (required for the top-level import; see §16.1).
+- `WORK_REPORT.md` — this section.
+
+Nothing else was touched; `domain` remains `openclaw`, the integration name is
+unchanged, no tags were created, and no branch other than
+`openclaw-integration` was touched.
+

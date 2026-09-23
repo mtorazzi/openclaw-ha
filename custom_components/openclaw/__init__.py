@@ -35,6 +35,7 @@ try:
 except ImportError:  # pragma: no cover
     LOVELACE_DATA = "lovelace"
 
+from . import ai_task as ai_task, conversation as conversation, sensor as sensor
 from .api import OpenClawApiClient, OpenClawApiError
 from .const import (
     ATTR_ACCOUNT_ID,

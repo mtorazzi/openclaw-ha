@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from openai import OpenAIError
 import yaml
@@ -26,7 +26,6 @@ from homeassistant.helpers import intent, llm, template
 from homeassistant.helpers.chat_session import async_get_chat_session
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from . import OpenClawConfigEntry
 from .const import (
     ATTR_MESSAGE,
     ATTR_MODEL,
@@ -48,6 +47,9 @@ from .exceptions import FunctionLoadFailed, FunctionNotFound, InvalidFunction
 from .functions import get_function
 from .helpers import get_exposed_entities
 from .skills import Skill, SkillManager
+
+if TYPE_CHECKING:
+    from . import OpenClawConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
