@@ -31,6 +31,7 @@ from .const import (
     CONF_EXTRA_BODY,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
+    CONF_MODEL_OVERRIDE,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -40,10 +41,12 @@ from .const import (
     DEFAULT_EXTRA_BODY,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_MODEL_OVERRIDE,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
     DOMAIN,
+    HEADER_MODEL_OVERRIDE,
     RESERVED_TOOL_NAMES,
 )
 from .exceptions import FunctionNotFound, ParseArgumentsFailed, TokenLengthExceededError
@@ -300,6 +303,16 @@ class OpenClawBaseLLMEntity(Entity):
                     api_kwargs["extra_body"] = json.loads(rendered)
             except (TemplateError, json.JSONDecodeError) as err:
                 _LOGGER.warning("Invalid extra_body for %s, ignoring: %s", model, err)
+
+        # Backend model override — sent as the ``x-openclaw-model`` header.
+        # The ``model`` field above selects the *agent*; this header pins the
+        # backend model the gateway runs for that agent. Empty keeps the
+        # agent's configured primary and its fallbacks chain untouched.
+        model_override = (
+            options.get(CONF_MODEL_OVERRIDE, DEFAULT_MODEL_OVERRIDE) or ""
+        ).strip()
+        if model_override:
+            api_kwargs["extra_headers"] = {HEADER_MODEL_OVERRIDE: model_override}
 
         # Add structured output format if provided. The OpenClaw gateway
         # forwards ``response_format`` to the backing agent but does NOT

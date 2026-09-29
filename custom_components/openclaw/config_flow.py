@@ -46,6 +46,7 @@ from .const import (
     CONF_GATEWAY_TOKEN,
     CONF_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     CONF_MAX_TOKENS,
+    CONF_MODEL_OVERRIDE,
     CONF_PROMPT,
     CONF_SHORTEN_TOOL_CALL_ID,
     CONF_SKILLS,
@@ -67,6 +68,7 @@ from .const import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_MAX_FUNCTION_CALLS_PER_CONVERSATION,
     DEFAULT_MAX_TOKENS,
+    DEFAULT_MODEL_OVERRIDE,
     DEFAULT_NAME,
     DEFAULT_PROMPT,
     DEFAULT_SHORTEN_TOOL_CALL_ID,
@@ -327,6 +329,17 @@ class OpenClawSubentryFlowHandler(ConfigSubentryFlow):
             )
         ] = TemplateSelector()
 
+        # Add backend model override — sent as the ``x-openclaw-model`` header.
+        # The Model field keeps selecting the *agent*; this pins the backend
+        # model the gateway runs for it (e.g. opencode-go/space-bunny-free).
+        # Empty disables the override.
+        schema[
+            vol.Optional(
+                CONF_MODEL_OVERRIDE,
+                default=DEFAULT_MODEL_OVERRIDE,
+            )
+        ] = str
+
         # Add shorten_tool_call_id option (for Mistral AI compatibility)
         schema[
             vol.Optional(
@@ -568,6 +581,17 @@ class OpenClawAITaskSubentryFlowHandler(ConfigSubentryFlow):
                 default=DEFAULT_EXTRA_BODY,
             )
         ] = TemplateSelector()
+
+        # Add backend model override — sent as the ``x-openclaw-model`` header.
+        # The Model field keeps selecting the *agent*; this pins the backend
+        # model the gateway runs for it (e.g. opencode-go/space-bunny-free).
+        # Empty disables the override.
+        schema[
+            vol.Optional(
+                CONF_MODEL_OVERRIDE,
+                default=DEFAULT_MODEL_OVERRIDE,
+            )
+        ] = str
 
         # Add shorten_tool_call_id option (for Mistral AI compatibility)
         schema[

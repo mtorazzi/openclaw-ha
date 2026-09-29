@@ -97,8 +97,23 @@ The base URL is derived as `http(s)://<host>:<port>/v1`.
 
 - **Conversation agent** — prompt template, model, max tokens, max function
   calls per conversation, skills, functions, context threshold/truncation, and
-  advanced options (temperature, top_p, extra_body, shorten tool call IDs).
+  advanced options (temperature, top_p, extra_body, model override, shorten
+  tool call IDs).
 - **AI Task agent** — model, max tokens, advanced options.
+
+#### Model vs backend model override
+
+The **Model** field is an *agent target*, not a provider model: `openclaw/default`
+delegates to the gateway's default agent, `openclaw:<agent_id>` pins a specific
+one. The gateway ignores anything else there.
+
+The advanced option **Backend model override** is sent as the
+`x-openclaw-model` request header and is what actually pins the backend model
+the agent runs (for example `opencode-go/space-bunny-free`). Leave it empty to
+use the agent's configured primary model and its fallbacks chain. The gateway
+accepts the header from a shared-secret bearer caller (this integration);
+`/v1/models` lists agent targets only, so a backend model id is typed by hand,
+not offered in a dropdown.
 
 ### Client tools (functions)
 

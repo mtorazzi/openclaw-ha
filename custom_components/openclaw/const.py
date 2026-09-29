@@ -363,6 +363,15 @@ DEFAULT_CONTEXT_TRUNCATE_STRATEGY = CONTEXT_TRUNCATE_STRATEGIES[0]["key"]
 CONF_EXTRA_BODY = "extra_body"
 DEFAULT_EXTRA_BODY = ""
 
+# Backend model override, sent as the ``x-openclaw-model`` request header.
+# The OpenAI ``model`` field is an agent target (``openclaw/default`` or
+# ``openclaw:<agentId>``), never a provider model, so it cannot pin a backend
+# model on its own; this header is the supported way to do that. Empty leaves
+# the override off, so the agent's configured primary and its fallbacks apply.
+CONF_MODEL_OVERRIDE = "model_override"
+DEFAULT_MODEL_OVERRIDE = ""
+HEADER_MODEL_OVERRIDE = "x-openclaw-model"
+
 SERVICE_QUERY_IMAGE = "query_image"
 
 CONF_PAYLOAD_TEMPLATE = "payload_template"
