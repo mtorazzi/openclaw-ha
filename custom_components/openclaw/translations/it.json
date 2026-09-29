@@ -47,9 +47,11 @@
                     "data": {
                         "temperature": "Temperatura",
                         "top_p": "Top P",
+                        "model_override": "Backend model override (x-openclaw-model)",
                         "shorten_tool_call_id": "Shorten tool call IDs"
                     },
                     "data_description": {
+                        "model_override": "Opzionale. Inviato come header x-openclaw-model: fissa il modello di backend che il gateway esegue per l'agente selezionato (es. opencode-go/space-bunny-free). Il campo Modello qui sopra continua a indirizzare l'agente (openclaw/default). Vuoto = modello configurato dell'agente.",
                         "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
                     }
                 }
@@ -75,9 +77,11 @@
                     "data": {
                         "temperature": "Temperature",
                         "top_p": "Top P",
+                        "model_override": "Backend model override (x-openclaw-model)",
                         "shorten_tool_call_id": "Shorten tool call IDs"
                     },
                     "data_description": {
+                        "model_override": "Opzionale. Inviato come header x-openclaw-model: fissa il modello di backend che il gateway esegue per l'agente selezionato (es. opencode-go/space-bunny-free). Il campo Modello qui sopra continua a indirizzare l'agente (openclaw/default). Vuoto = modello configurato dell'agente.",
                         "shorten_tool_call_id": "Required for Mistral AI cloud API compatibility. Enable only if your provider requires short (9-character) tool call IDs. Keep disabled for OpenAI and most other providers."
                     }
                 }

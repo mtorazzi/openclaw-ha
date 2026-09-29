@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1
+
+### Added
+
+- Advanced option **Backend model override** on both subentries (conversation
+  agent and AI Task). When set, the value is sent as the `x-openclaw-model`
+  request header, which pins the backend model the gateway runs for the
+  selected agent. The OpenAI `model` field only selects the agent
+  (`openclaw/default`, `openclaw:<agent_id>`), so it cannot do this on its own.
+  Empty leaves the agent's configured primary model and its fallbacks intact.
+
 ## 1.0.0
 
 Hard fork of
